@@ -70,13 +70,16 @@ test-suite test
         main-is: Test.hs
         default-language:    Haskell2010
         build-depends: base, bytestring, bytestring-xml, lens, mtl, containers, array
+        default-language:    Haskell2010
 
 Benchmark bench
         type: exitcode-stdio-1.0
         main-is: Bench.hs
-        build-depends:  base, bytestring, bytestring-xml, lens, mtl, containers, array, hexml, criterion
+        build-depends:  base, bytestring, bytestring-xml, lens, mtl, containers, array, hexml, criterion, xml, xml-conduit, deepseq, data-default
+        default-language:    Haskell2010
 
 Executable validate 
         main-is: Validate.hs
         build-depends:  base, bytestring, bytestring-xml, lens, mtl, containers, array, hexml
         ghc-options: -rtsopts
+        default-language:    Haskell2010
