@@ -16,6 +16,7 @@ module Data.ByteString.Xml.Internal where
 
 import Control.Applicative
 import Control.Arrow (second)
+import Control.Exception (try, evaluate, SomeException(..))
 import Control.Monad
 import Control.Monad.Error.Class (MonadError(..))
 import Control.Monad.Reader.Class
@@ -31,7 +32,7 @@ import Data.Monoid
 import Data.Word
 import Data.Maybe (isJust)
 import Control.Lens
-
+import System.IO.Unsafe
 import Foreign.ForeignPtr       (ForeignPtr, withForeignPtr)
 import GHC.Stack hiding (SrcLoc)
 
@@ -44,10 +45,10 @@ newtype ParseState =
   deriving Show
 makeLenses ''ParseState
 
-type MonadParse m = (MonadState ParseState m, MonadError Error m)
+type MonadParse m = (MonadState ParseState m)
 
-throw :: (MonadError Error m) => ErrorType -> m a
-throw etype = throwError $ Error etype callStack
+throw :: ErrorType -> m a
+throw etype = error $ show etype 
 
 loc = do
   PS _ o _ <- use cursor
@@ -250,31 +251,29 @@ instance Monad ParseResult where
   ParseError   e >>= _ = ParseError e
   ParseSuccess x >>= f = f x
 
-newtype ParseMonad a = PM {runPM :: ParseState -> (# ParseResult a, ParseState #) }
-instance Functor ParseMonad where fmap f (PM m) = PM $ \ps -> case m ps of (# a, ps' #) -> (# fmap f a, ps' #)
+newtype ParseMonad a = PM {runPM :: ParseState -> (# a, ParseState #) }
+instance Functor ParseMonad where fmap f (PM m) = PM $ \ps -> case m ps of (# a, ps' #) -> (# f a, ps' #)
 instance Applicative ParseMonad where
-  pure x = PM $ \ps -> (# ParseSuccess x, ps #)
+  pure x = PM $ \ps -> (# x, ps #)
   PM pmf <*> PM pmx = PM $ \ps ->
     let  (# f, ps'  #) = pmf ps
          (# x, ps'' #) = pmx ps'
-    in (# f <*> x, ps'' #)
+    in (# f x, ps'' #)
 instance Monad ParseMonad where
   return = pure
   {-# INLINE (>>=) #-}
   PM m >>= k = PM $ \ps ->
     case m ps of
-      (# ParseError e,   ps' #) -> (# ParseError e, ps' #)
-      (# ParseSuccess a, ps' #) -> runPM (k a) ps'
+      (# a, ps' #) -> runPM (k a) ps'
 instance MonadState ParseState ParseMonad where
-  get   = PM $ \ps -> (# ParseSuccess ps, ps #)
-  put x = PM $ \_  -> (# ParseSuccess (), x #)
-instance MonadError Error ParseMonad where
-  throwError e = PM $ \ps -> (# ParseError e, ps #)
+  get   = PM $ \ps -> (# ps, ps #)
+  put x = PM $ \_  -> (# (), x #)
 
-parse :: ByteString -> Either Error Document 
-parse b =
-  case runPM parseContents (ParseState b) of
-    (# ParseError e,    _ #) -> Left e
-    (# ParseSuccess it, _ #) -> Right $ Doc b $ Node "\\" 0 [] it
+parse :: ByteString -> Either String Document
+parse b = unsafePerformIO $ do
+  res <- try $ evaluate $ case runPM parseContents (ParseState b) of (# it, _ #) -> it
+  return$ case res of
+    Right it -> Right $ Doc b $ Node "\\" 0 [] it
+    Left (SomeException e) -> Left (show e)
 
 (|||) a b c = a || b || c
