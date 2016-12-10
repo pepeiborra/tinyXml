@@ -26,8 +26,8 @@ attributeBy :: Node -> Str -> Maybe Attribute
 attributeBy n s = getAlt $ foldMap (\a -> Alt(a <$ guard(s == nameA a))) $ attributes n
 --  listToMaybe $ filter (\(Attribute a _) -> a == s) $ attributes n
 
-location :: Node -> (Int, Int)
-location n@(Node _ (Source src) s _ _) =
+location :: Document -> Node -> (Int, Int)
+location Doc{ptr=src} n@(Node _ s _ _) =
   BS.foldl' f (pair 1 1) $ BS.take (fromIntegral s) src
     where
         pair !a !b = (a,b)

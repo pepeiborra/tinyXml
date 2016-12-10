@@ -1,3 +1,4 @@
+{-# OPTIONS_GHC -fobject-code #-}
 {-# LANGUAGE BangPatterns, DisambiguateRecordFields, DuplicateRecordFields #-}
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE TemplateHaskell #-}
@@ -15,14 +16,15 @@ module Data.ByteString.Xml.Internal where
 
 import Control.Applicative
 import Control.Arrow (second)
-import Control.Monad.Except
+import Control.Monad
+import Control.Monad.Error.Class (MonadError(..))
 import Control.Monad.Reader.Class
 import Control.Monad.State.Class
 import Data.ByteString.Char8 (ByteString)
 import Data.ByteString.Unsafe as BS
 import qualified Data.ByteString.Char8 as BS
 import Data.ByteString.Internal (w2c, ByteString(..))
-import Data.Char hiding (Space) 
+import Data.Char hiding (Space)
 import Data.Array.IArray
 import Data.Sequence (Seq)
 import Data.Monoid
@@ -40,11 +42,9 @@ newtype ParseState =
     { _cursor :: Str
     }
   deriving Show
-
-
 makeLenses ''ParseState
 
-type MonadParse m = (MonadReader Source m, MonadState ParseState m, MonadError Error m)
+type MonadParse m = (MonadState ParseState m, MonadError Error m)
 
 throw :: (MonadError Error m) => ErrorType -> m a
 throw etype = throwError $ Error etype callStack
@@ -154,8 +154,7 @@ parseNode = do
         if (c == '/' || c == '?') && n == '>'
           then do
             _ <- pop
-            src <- ask
-            return(Node name src l attrs [])
+            return(Node name l attrs [])
           else do
             unless(c == '>') $ throwLoc (UnterminatedTag name)
             nn <- parseContents
@@ -169,8 +168,7 @@ parseNode = do
                 _ <- pop
                 return ()
               _ -> throwLoc(UnterminatedTag name)
-            src <- ask
-            return (Node name src l attrs nn)
+            return (Node name l attrs nn)
 
 commentEnd :: ByteString -> (ByteString, ByteString)
 commentEnd   = BS.breakSubstring $ BS.pack "-->"
@@ -192,7 +190,6 @@ dropComments = do
 
 parseContents :: MonadParse m => m (Seq(Either Str Node))
 parseContents = go mempty where
-  go :: MonadParse m => _ -> m (Seq(Either Str Node))
   go acc = do
     trim
     open <- find '<'
@@ -253,32 +250,31 @@ instance Monad ParseResult where
   ParseError   e >>= _ = ParseError e
   ParseSuccess x >>= f = f x
 
-newtype ParseMonad a = PM {runPM :: Source -> ParseState -> (# ParseResult a, ParseState #) }
-instance Functor ParseMonad where fmap f (PM m) = PM $ \s ps -> case m s ps of (# a, ps' #) -> (# fmap f a, ps' #)
+newtype ParseMonad a = PM {runPM :: ParseState -> (# ParseResult a, ParseState #) }
+instance Functor ParseMonad where fmap f (PM m) = PM $ \ps -> case m ps of (# a, ps' #) -> (# fmap f a, ps' #)
 instance Applicative ParseMonad where
-  pure x = PM $ \_ ps -> (# ParseSuccess x, ps #)
-  PM pmf <*> PM pmx = PM $ \s ps ->
-    let  (# f, ps'  #) = pmf s ps
-         (# x, ps'' #) = pmx s ps'
+  pure x = PM $ \ps -> (# ParseSuccess x, ps #)
+  PM pmf <*> PM pmx = PM $ \ps ->
+    let  (# f, ps'  #) = pmf ps
+         (# x, ps'' #) = pmx ps'
     in (# f <*> x, ps'' #)
 instance Monad ParseMonad where
   return = pure
-  PM m >>= k = PM $ \s ps ->
-    case m s ps of
+  {-# INLINE (>>=) #-}
+  PM m >>= k = PM $ \ps ->
+    case m ps of
       (# ParseError e,   ps' #) -> (# ParseError e, ps' #)
-      (# ParseSuccess a, ps' #) -> runPM (k a) s ps'
+      (# ParseSuccess a, ps' #) -> runPM (k a) ps'
 instance MonadState ParseState ParseMonad where
-  get   = PM $ \_ ps -> (# ParseSuccess ps, ps #)
-  put x = PM $ \_ _  -> (# ParseSuccess (), x #)
-instance MonadReader Source ParseMonad where
-  ask   = PM $ \s ps -> (# pure s, ps #)
+  get   = PM $ \ps -> (# ParseSuccess ps, ps #)
+  put x = PM $ \_  -> (# ParseSuccess (), x #)
 instance MonadError Error ParseMonad where
-  throwError e = PM $ \_ ps -> (# ParseError e, ps #)
+  throwError e = PM $ \ps -> (# ParseError e, ps #)
 
-parse :: ByteString -> Either Error Node
+parse :: ByteString -> Either Error Document 
 parse b =
-  case runPM parseContents (Source b) (ParseState b) of
+  case runPM parseContents (ParseState b) of
     (# ParseError e,    _ #) -> Left e
-    (# ParseSuccess it, _ #) -> Right $ Node "\\" (Source b) 0 [] it
+    (# ParseSuccess it, _ #) -> Right $ Doc b $ Node "\\" 0 [] it
 
 (|||) a b c = a || b || c

@@ -17,8 +17,8 @@ type Str = ByteString
 
 data Attribute =
   Attribute
-  { nameA :: !Str,
-    value :: !Str
+  { nameA :: {-# UNPACK #-}!Str,
+    value :: {-# UNPACK #-}!Str
   }
   deriving (Eq, Show)
 
@@ -26,26 +26,27 @@ newtype Source = Source ByteString
 
 data Node =
   Node
-  { name       :: !Str,
-    source     :: !Source,
-    start      :: !Int,
+  { name       :: {-# UNPACK #-} !Str,
+    start      :: {-# UNPACK #-} !Int,
     attributes :: !(Seq Attribute),
     contents   :: !(Seq(Either Str Node))
   }
 
 data Document =
   Doc
-  { root :: !Node,
-    ptr  :: ForeignPtr Word8
+  {
+    ptr  :: !ByteString,
+    root :: !Node
   }
-
 
 instance Show Node where
   show Node{name,attributes,contents} =
     show (name,attributes,contents)
 
+instance Show Document where show = show . root
+
 instance Plated Node where
-  plate f (Node n s l a nn) = Node n s l a <$> traverse (traverse f) nn
+  plate f (Node n l a nn) = Node n l a <$> traverse (traverse f) nn
 
 newtype SrcLoc = SrcLoc Int deriving Show
 
