@@ -1,0 +1,72 @@
+*.pdf
+.cabal-sandbox/
+repo/
+dist/
+dist-newstyle/
+wordpress-theme/
+yackage/
+*.hi
+*.o
+*.p_o
+*.*_o
+*.*-boot
+*.*~
+*.DS_Store
+*.dot
+*.pdf
+*.config
+*.aes
+*.prof
+*.log
+*.hp
+sandbox
+
+
+# Created by http://www.gitignore.io
+
+### Haskell ###
+dist
+cabal-dev
+*.o
+*.hi
+*.hs-e
+*.chi
+*.chs.h
+.virtualenv
+.hsenv
+.cabal-sandbox/
+.cabal-sandbox*
+cabal.sandbox.config
+cabal.config
+
+
+### Emacs ###
+# -*- mode: gitignore; -*-
+*~
+\#*\#
+/.emacs.desktop
+/.emacs.desktop.lock
+*.elc
+auto-save-list
+tramp
+.\#*
+
+# Org-mode
+.org-id-locations
+*_archive
+
+# flymake-mode
+*_flymake.*
+
+# eshell files
+/eshell/history
+/eshell/lastdir
+
+# elpa packages
+/elpa/
+
+# reftex files
+*.rel
+
+# AUCTeX auto folder
+/auto/
