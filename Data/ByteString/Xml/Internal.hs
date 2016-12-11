@@ -8,6 +8,7 @@
 {-# LANGUAGE OverloadedLists #-}
 {-# LANGUAGE PartialTypeSignatures #-}
 {-# LANGUAGE MultiParamTypeClasses #-}
+{-# LANGUAGE BangPatterns #-}
 {-# LANGUAGE NamedFieldPuns #-}
 
 module Data.ByteString.Xml.Internal (parse) where
@@ -16,6 +17,7 @@ import Control.Applicative
 import Control.Exception (try, evaluate, SomeException(..))
 import Control.Monad
 import Control.Monad.Reader.Class
+import Control.Monad.State.Class
 import Data.ByteString.Unsafe as BS
 import qualified Data.ByteString.Char8 as BS
 import Data.ByteString.Internal (w2c, ByteString(..))
@@ -40,9 +42,9 @@ skip n = cursor %= Str.drop n
 
 {-# INLINE pop #-}
 pop = do
-  c <- peek
-  skip 1
-  return c
+  bs@(PS _ o l) <- useE asBS
+  put $ Str (o+1) (l-1)
+  return (w2c $ BS.unsafeHead bs)
 
 {-# INLINE find #-}
 find c = do
@@ -51,8 +53,9 @@ find c = do
     Nothing ->
       return Nothing
     Just i -> do
-      prefix <- use(cursor . to(Str.take i))
-      skip i
+      let str = bs ^. indexPtr . _1
+      let !prefix = Str.take i str
+      put $! Str.drop i str
       return (Just prefix)
 
 {-# INLINE trim #-}
@@ -70,12 +73,12 @@ expectLoc pred e = do
 {-# INLINE parseName #-}
 parseName = do
   bs <- useE asBS
-  first <- peek
+  let first = w2c $ BS.unsafeHead bs
   case isName1 first of
     False -> return strEmpty
     True  -> do
       let (name :: Str, rest) = BS.span isName bs & each %~ view (indexPtr._1)
-      cursor .= rest
+      put rest
       return name
  where
     isName1 c = parseTable ! ord c == Name1
@@ -90,7 +93,7 @@ parseAttrVal = do
   c  <- expectLoc (liftA2 (||) (== '\'') (== '\"')) BadAttributeForm
   attrVal <- find c
   case attrVal of
-    Just x ->  pop *> return x
+    Just x ->  skip 1 *> return x
     Nothing -> throwLoc BadAttributeForm
 
 {-# INLINE parseAttrs #-}
@@ -149,8 +152,8 @@ dropComments = do
       case commentEnd (BS.drop 4 bs) of
         (_,rest) | BS.null rest ->
           throwLoc UnfinishedComment
-        (_,rest) -> do
-          asBS .== BS.drop 3 rest
+        (_, rest) -> do
+          put $ Str.drop 3 $ view (indexPtr._1) rest
           _ <- dropComments
           return True
 
