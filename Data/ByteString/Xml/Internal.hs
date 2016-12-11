@@ -1,6 +1,6 @@
-{-# OPTIONS_GHC -fobject-code #-}
-{-# LANGUAGE BangPatterns, DisambiguateRecordFields, DuplicateRecordFields #-}
-{-# LANGUAGE FlexibleContexts #-}
+{-# LANGUAGE DisambiguateRecordFields, DuplicateRecordFields #-}
+{-# LANGUAGE FlexibleContexts, FlexibleInstances #-}
+{-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE TemplateHaskell #-}
 {-# LANGUAGE ConstraintKinds #-}
 {-# LANGUAGE NoMonomorphismRestriction #-}
@@ -11,8 +11,9 @@
 {-# LANGUAGE MultiParamTypeClasses #-}
 {-# LANGUAGE NamedFieldPuns #-}
 {-# LANGUAGE UnboxedTuples #-}
+{-# LANGUAGE ViewPatterns #-}
 
-module Data.ByteString.Xml.Internal where
+module Data.ByteString.Xml.Internal (parse) where
 
 import Control.Applicative
 import Control.Arrow (second)
@@ -31,73 +32,47 @@ import Data.Sequence (Seq)
 import Data.Monoid
 import Data.Word
 import Data.Maybe (isJust)
-import Control.Lens
+import Control.Lens hiding ((%=),(.=), use) -- redefined locally due to bad inlining
 import System.IO.Unsafe
 import Foreign.ForeignPtr       (ForeignPtr, withForeignPtr)
 import GHC.Stack hiding (SrcLoc)
 
-import Data.ByteString.Xml.Types
+import Data.ByteString.Xml.Monad
+import Data.ByteString.Xml.Types as Str
 
-newtype ParseState =
-  ParseState
-    { _cursor :: Str
-    }
-  deriving Show
-makeLenses ''ParseState
-
-type MonadParse m = (MonadState ParseState m)
-
-throw :: ErrorType -> m a
-throw etype = error $ show etype 
-
-loc = do
-  PS _ o _ <- use cursor
-  return (SrcLoc o)
-
-throwLoc :: MonadParse m => (SrcLoc -> ErrorType) -> m a
-throwLoc e = loc >>= throw . e
-
-peekAt :: MonadParse m => Int -> m (Char)
-peekAt n = use (cursor . to (`BS.unsafeIndex` n) . to w2c)
+peekAt :: MonadParse m =>Int -> m (Char)
+peekAt n = useE(asBS .to (w2c . (`BS.unsafeIndex` n)))
 
 peek :: MonadParse m => m Char
-peek = use (cursor . to BS.unsafeHead . to w2c)
+peek = useE (asBS . to (w2c . BS.unsafeHead))
+
+skip :: MonadParse m => Int -> m ()
+skip n = cursor %= Str.drop n
 
 pop :: MonadParse m => m Char
 pop = do
   c <- peek
-  cursor %= BS.unsafeTail
+  skip 1
   return c
 
 find ::MonadParse m => Char -> m (Maybe Str)
 find c = do
-  bs <- use cursor
+  bs <- useE asBS
   case BS.elemIndex c bs of
     Nothing ->
       return Nothing
     Just i -> do
-      (prefix,rest) <- use(cursor . to(BS.splitAt i))
-      cursor .= rest
+      prefix <- use(cursor . to(Str.take i))
+      skip i
       return (Just prefix)
 
-findPred ::MonadParse m => _ -> m _
-findPred pred = do
-  bs <- use cursor
-  case BS.findIndex pred bs of
-    Nothing ->
-      return Nothing
-    Just ix -> do
-      let (prefix, rest) = BS.splitAt ix bs
-      cursor .= rest
-      return (Just prefix)
-
-trim :: MonadParse m => m _
+trim :: MonadParse m => m ()
 trim =
-  cursor %= BS.dropWhile isSpace
+  asBS %== BS.dropWhile isSpace
     where
       isSpace c = parseTable ! ord c == Space
 
-expectLoc :: MonadParse m => (Char -> Bool) -> _ -> m Char
+expectLoc :: MonadParse m => (Char -> Bool) -> (SrcLoc -> ErrorType) -> m Char
 expectLoc pred e = do
   c <- pop
   when (not$ pred c) $ throwLoc e
@@ -105,12 +80,12 @@ expectLoc pred e = do
 
 parseName :: MonadParse m => m Str
 parseName = do
-  bs <- use cursor
+  bs <- useE asBS
   first <- peek
   case isName1 first of
-    False -> return BS.empty
+    False -> return strEmpty
     True  -> do
-      let (name, rest) = BS.span isName bs
+      let (name :: Str, rest) = BS.span isName bs & each %~ view (indexPtr._1)
       cursor .= rest
       return name
  where
@@ -126,7 +101,7 @@ parseAttrVal = do
   c  <- expectLoc (liftA2 (||) (== '\'') (== '\"')) BadAttributeForm
   attrVal <- find c
   case attrVal of
-    Just x -> pop *> return x
+    Just x ->  pop *> return x
     Nothing -> throwLoc BadAttributeForm
 
 parseAttrs :: (MonadParse m) => m (Seq Attribute)
@@ -134,7 +109,7 @@ parseAttrs = go mempty where
   go acc = do
     trim
     n <- parseName
-    if BS.null n
+    if Str.null n
       then return acc
       else do
         v <- parseAttrVal
@@ -146,37 +121,38 @@ parseNode = do
     SrcLoc l <- loc
     _ <- expectLoc (== '<') $ error "parseTag: expected <"
     c <- peek
-    when (c == '?') $ cursor %= BS.drop 1
+    when (c == '?') (skip 1)
     name  <- parseName
     do -- lazily parse the attributes
         attrs <- parseAttrs
         c <- pop
         n <- peek
+        fptr <- ask
         if (c == '/' || c == '?') && n == '>'
           then do
-            _ <- pop
-            return(Node name l attrs [])
+            skip 1
+            return(Node name l fptr attrs [])
           else do
             unless(c == '>') $ throwLoc (UnterminatedTag name)
             nn <- parseContents
             (next1, next2) <- (,) <$> pop <*> pop
             case (next1, next2) of
               ('<', '/') -> do
-                matchTag <- use (cursor . to (name `BS.isPrefixOf`))
+                let n = (name,fptr) ^. from indexPtr
+                matchTag <- useE (asBS . to (n `BS.isPrefixOf`))
                 unless matchTag $ throwLoc (ClosingTagMismatch name)
-                cursor %= BS.drop (BS.length name)
+                cursor %= Str.drop (Str.length name)
                 _ <- find '>'
-                _ <- pop
-                return ()
+                skip 1
               _ -> throwLoc(UnterminatedTag name)
-            return (Node name l attrs nn)
+            return (Node name l fptr attrs nn)
 
 commentEnd :: ByteString -> (ByteString, ByteString)
 commentEnd   = BS.breakSubstring $ BS.pack "-->"
 
 dropComments ::MonadParse m => m Bool
 dropComments = do
-  bs <- use cursor
+  bs <- useE asBS
   case "<!--" `BS.isPrefixOf` bs of
     False ->
       return False
@@ -185,11 +161,11 @@ dropComments = do
         (_,rest) | BS.null rest ->
           throwLoc UnfinishedComment
         (_,rest) -> do
-          cursor .= BS.drop 3 rest
+          asBS .== BS.drop 3 rest
           _ <- dropComments
           return True
 
-parseContents :: MonadParse m => m (Seq(Either Str Node))
+parseContents :: MonadParse m => m (Seq NodeContent)
 parseContents = go mempty where
   go acc = do
     trim
@@ -208,14 +184,14 @@ parseContents = go mempty where
                 go acc
               else do
                 n <- parseNode
-                go (appendNonNullPrefix prefix acc |> Right n)
+                go (appendNonNullPrefix prefix acc |> NodeChild n)
       -- no tag
       _ -> do
         rest <- use cursor
         return (appendNonNullPrefix rest acc)
   appendNonNullPrefix bs
-      | BS.null bs = id
-      | otherwise  = (|> Left bs)
+      | Str.null bs = id
+      | otherwise  = (|> NodeText bs)
 
 type ParseTable = Array Int ParseType
 
@@ -236,44 +212,15 @@ parseTable =
     | i <- [0..255]
     ]
 
--- Roll our own for efficiency
-data ParseResult a = ParseError !Error | ParseSuccess !a
-makePrisms ''ParseResult
-
-instance Functor ParseResult where fmap = over _ParseSuccess
-instance Applicative ParseResult where
-  pure = ParseSuccess
-  ParseSuccess pf <*> ParseSuccess px = ParseSuccess (pf px)
-  ParseError e <*> _ = ParseError e
-  _ <*> ParseError e = ParseError e
-instance Monad ParseResult where
-  return = pure
-  ParseError   e >>= _ = ParseError e
-  ParseSuccess x >>= f = f x
-
-newtype ParseMonad a = PM {runPM :: ParseState -> (# a, ParseState #) }
-instance Functor ParseMonad where fmap f (PM m) = PM $ \ps -> case m ps of (# a, ps' #) -> (# f a, ps' #)
-instance Applicative ParseMonad where
-  pure x = PM $ \ps -> (# x, ps #)
-  PM pmf <*> PM pmx = PM $ \ps ->
-    let  (# f, ps'  #) = pmf ps
-         (# x, ps'' #) = pmx ps'
-    in (# f x, ps'' #)
-instance Monad ParseMonad where
-  return = pure
-  {-# INLINE (>>=) #-}
-  PM m >>= k = PM $ \ps ->
-    case m ps of
-      (# a, ps' #) -> runPM (k a) ps'
-instance MonadState ParseState ParseMonad where
-  get   = PM $ \ps -> (# ps, ps #)
-  put x = PM $ \_  -> (# (), x #)
-
-parse :: ByteString -> Either String Document
-parse b = unsafePerformIO $ do
-  res <- try $ evaluate $ case runPM parseContents (ParseState b) of (# it, _ #) -> it
+parse :: ByteString -> Either String Node
+parse (view indexPtr -> (str,fptr)) = unsafePerformIO $ do
+  res <- try $ evaluate $ case runPM parseContents fptr str of (# it, _ #) -> it
   return$ case res of
-    Right it -> Right $ Doc b $ Node "\\" 0 [] it
-    Left (SomeException e) -> Left (show e)
+    Right it ->
+      Right $ Node rootStr 0 rootPtr [] it
+    Left (SomeException e) ->
+      Left (show e)
 
 (|||) a b c = a || b || c
+
+(rootStr, rootPtr) = view indexPtr "\\"
