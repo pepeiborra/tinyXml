@@ -1,7 +1,6 @@
 {-# LANGUAGE DisambiguateRecordFields, DuplicateRecordFields #-}
 {-# LANGUAGE FlexibleContexts, FlexibleInstances #-}
 {-# LANGUAGE ScopedTypeVariables #-}
-{-# LANGUAGE TemplateHaskell #-}
 {-# LANGUAGE ConstraintKinds #-}
 {-# LANGUAGE NoMonomorphismRestriction #-}
 {-# LANGUAGE LambdaCase #-}
@@ -10,32 +9,21 @@
 {-# LANGUAGE PartialTypeSignatures #-}
 {-# LANGUAGE MultiParamTypeClasses #-}
 {-# LANGUAGE NamedFieldPuns #-}
-{-# LANGUAGE UnboxedTuples #-}
-{-# LANGUAGE ViewPatterns #-}
 
 module Data.ByteString.Xml.Internal (parse) where
 
 import Control.Applicative
-import Control.Arrow (second)
 import Control.Exception (try, evaluate, SomeException(..))
 import Control.Monad
-import Control.Monad.Error.Class (MonadError(..))
 import Control.Monad.Reader.Class
-import Control.Monad.State.Class
-import Data.ByteString.Char8 (ByteString)
 import Data.ByteString.Unsafe as BS
 import qualified Data.ByteString.Char8 as BS
 import Data.ByteString.Internal (w2c, ByteString(..))
 import Data.Char hiding (Space)
 import Data.Array.IArray
 import Data.Sequence (Seq)
-import Data.Monoid
-import Data.Word
-import Data.Maybe (isJust)
 import Control.Lens hiding ((%=),(.=), use) -- redefined locally due to bad inlining
 import System.IO.Unsafe
-import Foreign.ForeignPtr       (ForeignPtr, withForeignPtr)
-import GHC.Stack hiding (SrcLoc)
 
 import Data.ByteString.Xml.Monad
 import Data.ByteString.Xml.Types as Str
@@ -43,19 +31,20 @@ import Data.ByteString.Xml.Types as Str
 peekAt :: MonadParse m =>Int -> m (Char)
 peekAt n = useE(asBS .to (w2c . (`BS.unsafeIndex` n)))
 
-peek :: MonadParse m => m Char
+{-# INLINE peek #-}
+peek :: MonadParse m => m (Char)
 peek = useE (asBS . to (w2c . BS.unsafeHead))
 
-skip :: MonadParse m => Int -> m ()
+{-# INLINE skip #-}
 skip n = cursor %= Str.drop n
 
-pop :: MonadParse m => m Char
+{-# INLINE pop #-}
 pop = do
   c <- peek
   skip 1
   return c
 
-find ::MonadParse m => Char -> m (Maybe Str)
+{-# INLINE find #-}
 find c = do
   bs <- useE asBS
   case BS.elemIndex c bs of
@@ -66,19 +55,19 @@ find c = do
       skip i
       return (Just prefix)
 
-trim :: MonadParse m => m ()
+{-# INLINE trim #-}
 trim =
   asBS %== BS.dropWhile isSpace
     where
       isSpace c = parseTable ! ord c == Space
 
-expectLoc :: MonadParse m => (Char -> Bool) -> (SrcLoc -> ErrorType) -> m Char
+{-# INLINE expectLoc #-}
 expectLoc pred e = do
   c <- pop
   when (not$ pred c) $ throwLoc e
   return c
 
-parseName :: MonadParse m => m Str
+{-# INLINE parseName #-}
 parseName = do
   bs <- useE asBS
   first <- peek
@@ -93,7 +82,7 @@ parseName = do
     isName c = let x = parseTable ! ord c in x == Name || x == Name1
 
 -- | Assumes cursor is on a '='
-parseAttrVal :: MonadParse m => m Str
+{-# INLINE parseAttrVal #-}
 parseAttrVal = do
   trim
   _ <- expectLoc (== '=') BadAttributeForm
@@ -104,7 +93,7 @@ parseAttrVal = do
     Just x ->  pop *> return x
     Nothing -> throwLoc BadAttributeForm
 
-parseAttrs :: (MonadParse m) => m (Seq Attribute)
+{-# INLINE parseAttrs #-}
 parseAttrs = go mempty where
   go acc = do
     trim
@@ -116,7 +105,7 @@ parseAttrs = go mempty where
         go (acc |> Attribute n v)
 
 -- | Parse until </
-parseNode :: MonadParse m => m(Node)
+{-# INLINE parseNode #-}
 parseNode = do
     SrcLoc l <- loc
     _ <- expectLoc (== '<') $ error "parseTag: expected <"
@@ -150,7 +139,7 @@ parseNode = do
 commentEnd :: ByteString -> (ByteString, ByteString)
 commentEnd   = BS.breakSubstring $ BS.pack "-->"
 
-dropComments ::MonadParse m => m Bool
+{-# INLINE dropComments #-}
 dropComments = do
   bs <- useE asBS
   case "<!--" `BS.isPrefixOf` bs of
@@ -165,7 +154,6 @@ dropComments = do
           _ <- dropComments
           return True
 
-parseContents :: MonadParse m => m (Seq NodeContent)
 parseContents = go mempty where
   go acc = do
     trim
@@ -213,8 +201,8 @@ parseTable =
     ]
 
 parse :: ByteString -> Either String Node
-parse (view indexPtr -> (str,fptr)) = unsafePerformIO $ do
-  res <- try $ evaluate $ case runPM parseContents fptr str of (# it, _ #) -> it
+parse bs = unsafePerformIO $ do
+  res <- try $ evaluate $ runPM bs parseContents
   return$ case res of
     Right it ->
       Right $ Node rootStr 0 rootPtr [] it

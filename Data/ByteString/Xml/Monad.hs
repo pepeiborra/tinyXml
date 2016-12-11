@@ -9,10 +9,13 @@
 {-# LANGUAGE Rank2Types #-}
 
 module Data.ByteString.Xml.Monad where
-
+import Control.Applicative
+import Control.Monad
+import Control.Monad.ST
 import Control.Monad.Reader.Class
 import Control.Monad.State.Class
 import Data.ByteString.Internal (ByteString(..))
+import Data.STRef
 import Data.Word
 import Control.Lens hiding (use)
 import Foreign.ForeignPtr       (ForeignPtr)
@@ -25,7 +28,22 @@ type MonadParse m = (MonadReader (ForeignPtr Word8) m, MonadState ParseState m)
 type ParseState = Str
 cursor = simple
 
-newtype ParseMonad a = PM {runPM :: ForeignPtr Word8 -> ParseState -> (# a, ParseState #) }
+data Env s = Env
+  { _ptr :: ForeignPtr Word8
+  , _offset :: STRef s Int
+  , _length :: STRef s Int
+  }
+
+newtype ParseMonad s a =
+  PM {unPM :: Env s -> ST s a }
+
+
+{-# INLINE runPM #-}
+runPM :: ByteString -> (forall s. ParseMonad s a) -> a
+runPM (PS fptr o l) pm = runST $ do
+  refO <- newSTRef o
+  refL <- newSTRef l
+  unPM pm (Env fptr refO refL)
 
 {-# INLINE asBS #-}
 asBS :: Lens' (ParseState, ForeignPtr Word8) ByteString
@@ -75,24 +93,41 @@ loc = do
 throwLoc :: MonadParse m => (SrcLoc -> ErrorType) -> m a
 throwLoc e = loc >>= throw . e
 
-instance Functor ParseMonad where fmap f (PM m) = PM $ \s ps -> case m s ps of (# a, ps' #) -> (# f a, ps' #)
-instance Applicative ParseMonad where
-  pure x = PM $ \_ ps -> (# x, ps #)
-  PM pmf <*> PM pmx = PM $ \s ps ->
-    let  (# f, ps'  #) = pmf s ps
-         (# x, ps'' #) = pmx s ps'
-    in (# f x, ps'' #)
-instance Monad ParseMonad where
+instance Functor (ParseMonad s) where
+  fmap f  = PM . fmap (fmap f) . unPM
+instance Applicative (ParseMonad s) where
+  pure x = PM $ \_ -> return x
+  PM pmf <*> PM pmx = PM (liftA2 (<*>) pmf pmx)
+instance Monad (ParseMonad s) where
   return = pure
   {-# INLINE (>>=) #-}
-  PM m >>= k = PM $ \s ps ->
-    case m s ps of
-      (# a, ps' #) -> runPM (k a) s ps'
-instance MonadState ParseState ParseMonad where
-  state f = PM $ \_ ps -> let ( !a, ps') = f ps in (# a, ps' #)
-  get   = PM $ \_ ps -> (# ps, ps #)
-  put x = PM $ \_ _  -> (# (), x #)
+  PM m >>= k = PM $ \ps -> do
+    a <- m ps
+    unPM (k a) ps
 
-instance MonadReader (ForeignPtr Word8) ParseMonad where
-  ask = PM $ \s ps -> (# s, ps #)
+{-# NOINLINE myReadSTRef #-}
+myReadSTRef v = readSTRef v
 
+instance MonadState ParseState (ParseMonad s) where
+  {-# INLINE state #-} -- version in transformers lacks inline pragma
+  state f = do
+    st <- get
+    let ( !a, st') = f st
+    put st'
+    return a
+
+  {-# INLINE get #-}
+  get   = PM $ \(Env _ o l) -> Str <$> myReadSTRef o <*> myReadSTRef l
+  {-# INLINE put #-}
+  put (Str o l) = PM $ \(Env _ oR lR) -> do
+    writeSTRef oR o
+    writeSTRef lR l
+
+instance MonadReader (ForeignPtr Word8) (ParseMonad s) where
+  {-# INLINE ask #-}
+  ask = PM $ \(Env fptr _ _) -> return fptr
+
+{-# RULES
+ "dupSTRef" forall r.
+         myReadSTRef r >>= \x -> myReadSTRef r = myReadSTRef r
+ #-}
