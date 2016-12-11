@@ -14,6 +14,7 @@ import Control.Monad
 import Control.Monad.ST
 import Control.Monad.Reader.Class
 import Control.Monad.State.Class
+import Data.Array.Base
 import Data.Array.ST
 import Data.ByteString.Internal (ByteString(..))
 import Data.STRef
@@ -31,7 +32,7 @@ cursor = simple
 
 data Env s = Env
   { _ptr :: ForeignPtr Word8
-  , _offsetAndLength :: STUArray s Bool Int -- True for Length
+  , _offsetAndLength :: STUArray s Int Int -- True for Length
   }
 
 newtype ParseMonad s a =
@@ -41,7 +42,7 @@ newtype ParseMonad s a =
 {-# INLINE runPM #-}
 runPM :: ByteString -> (forall s. ParseMonad s a) -> a
 runPM (PS fptr o l) pm = runST $ do
-  refO <- newListArray (False, True) [o,l]
+  refO <- newListArray (0,1) [o,l]
   unPM pm (Env fptr refO)
 
 {-# INLINE asBS #-}
@@ -104,9 +105,6 @@ instance Monad (ParseMonad s) where
     a <- m ps
     unPM (k a) ps
 
-{-# NOINLINE myReadSTRef #-}
-myReadSTRef v = readSTRef v
-
 instance MonadState ParseState (ParseMonad s) where
   {-# INLINE state #-} -- version in transformers lacks inline pragma
   state f = do
@@ -116,17 +114,13 @@ instance MonadState ParseState (ParseMonad s) where
     return a
 
   {-# INLINE get #-}
-  get   = PM $ \(Env _ a) -> Str <$> readArray a False <*> readArray a True
+  get   = PM $ \(Env _ a) -> Str <$> unsafeRead a 0 <*> unsafeRead a 1
   {-# INLINE put #-}
   put (Str o l) = PM $ \(Env _ a) -> do
-    writeArray a False o
-    writeArray a True l
+   unsafeWrite  a 0 o
+   unsafeWrite  a 1 l
 
 instance MonadReader (ForeignPtr Word8) (ParseMonad s) where
   {-# INLINE ask #-}
   ask = PM $ \(Env fptr _) -> return fptr
 
-{-# RULES
- "dupSTRef" forall r.
-         myReadSTRef r >>= \x -> myReadSTRef r = myReadSTRef r
- #-}
