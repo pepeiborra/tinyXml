@@ -23,7 +23,7 @@ import Criterion.Main
 import GHC.Generics (Generic)
 
 process :: Show a => Either a b -> String
-process = either show (const "Success")
+process = either (error.show) (const "Success")
 
 main = do
   paths <- getArgs
