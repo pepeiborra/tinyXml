@@ -7,11 +7,11 @@ executable-profiling: True
 profiling: True
 
 package bytestring-xml
-  profiling-detail: all-functions
+  profiling-detail: exported-functions
   tests: False
   benchmarks: False
 
 package bytestring
-  profiling-detail: all-functions
+  profiling-detail: exported-functions
 
 allow-newer: bytestring
