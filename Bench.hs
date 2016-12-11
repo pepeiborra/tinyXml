@@ -28,16 +28,14 @@ process = either (error.show) (const "Success")
 main = do
   paths <- getArgs
 
-  contents <- mapM BS.readFile paths
-  
   let suite =
-        [ bgroup p
-            [ bench "hexml" $ whnf (process . Hexml.parse) contents
-            , bench "us" $ whnf (process . parse) contents
+        [ env (BS.readFile p) $ \xml -> bgroup p
+            [ bench "hexml" $ whnf (process . Hexml.parse) xml
+            , bench "us" $ whnf (process . parse) xml
 --            , bench "xml" $ nf (parseXML) contents
 --            , bench "xml-conduit" $ whnfIO $ XML.readFile def p
             ]
-        | (p,contents) <- zip paths contents ]
+        | p <- paths ]
 
   defaultMain suite 
 
