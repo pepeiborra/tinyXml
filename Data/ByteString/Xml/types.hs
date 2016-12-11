@@ -1,19 +1,32 @@
-{-# LANGUAGE BangPatterns, DisambiguateRecordFields, DuplicateRecordFields, NamedFieldPuns #-}
+{-# LANGUAGE TemplateHaskell, BangPatterns, DisambiguateRecordFields, DuplicateRecordFields, NamedFieldPuns #-}
 module Data.ByteString.Xml.Types where
 
 import Control.Lens
 import Data.ByteString.Char8 (ByteString)
+import Data.ByteString.Internal (ByteString(..))
 import Data.Sequence
 import Data.Word
 import GHC.Stack hiding (SrcLoc)
 import Foreign.ForeignPtr       (ForeignPtr, withForeignPtr)
 
 -- Alternative design - a shrunk version of ByteString relative to a ForeignPtr
-data Str2 =
+data Str =
   Str { offset :: {-# UNPACK #-} !Int, length :: {-# UNPACK #-} !Int }
   deriving (Eq,Show)
 
-type Str = ByteString
+strEmpty = Str 0 0
+{-# INLINE null #-}
+null (Str _ l) = l == 0
+{-# INLINE take #-}
+take i (Str o l) = Str o i -- unsafe
+{-# INLINE drop #-}
+drop i (Str o l) = Str (o+i) (l-i) -- unsafe
+
+{-# INLINE indexPtr #-}
+indexPtr :: Iso' ByteString (Str, ForeignPtr Word8)
+indexPtr = iso fromBS toBS where
+  fromBS (PS fptr o l) = (Str o l, fptr)
+  toBS (Str o l, fptr) = PS fptr o l
 
 data Attribute =
   Attribute
@@ -24,29 +37,28 @@ data Attribute =
 
 newtype Source = Source ByteString
 
+data NodeContent =
+  NodeText  {-# UNPACK #-} !Str |
+  NodeChild {-# UNPACK #-} !Node
+  deriving Show
+
 data Node =
   Node
   { name       :: {-# UNPACK #-} !Str,
     start      :: {-# UNPACK #-} !Int,
+    source     :: {-# UNPACK #-} !(ForeignPtr Word8),
     attributes :: !(Seq Attribute),
-    contents   :: !(Seq(Either Str Node))
-  }
-
-data Document =
-  Doc
-  {
-    ptr  :: !ByteString,
-    root :: !Node
+    contents   :: !(Seq NodeContent)
   }
 
 instance Show Node where
   show Node{name,attributes,contents} =
     show (name,attributes,contents)
 
-instance Show Document where show = show . root
+makePrisms ''NodeContent
 
 instance Plated Node where
-  plate f (Node n l a nn) = Node n l a <$> traverse (traverse f) nn
+  plate f (Node n l s a nn) = Node n l s a <$> traverse (_NodeChild f) nn
 
 newtype SrcLoc = SrcLoc Int deriving Show
 

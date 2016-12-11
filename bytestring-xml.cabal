@@ -51,7 +51,7 @@ library
   exposed-modules:     Data.ByteString.Xml, Data.ByteString.Xml.Internal, Data.ByteString.Xml.Types
   
   -- Modules included in this library but not exported.
-  -- other-modules:       
+  other-modules:       Data.ByteString.Xml.Monad
   
   -- LANGUAGE extensions used by modules in this package.
   other-extensions:    OverloadedStrings, BangPatterns, DisambiguateRecordFields, DuplicateRecordFields, FlexibleContexts, TemplateHaskell, ConstraintKinds, NoMonomorphismRestriction, LambdaCase, OverloadedLists, PartialTypeSignatures
