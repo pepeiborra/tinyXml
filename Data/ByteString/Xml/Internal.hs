@@ -112,28 +112,35 @@ parseAttrs = go mempty where
 parseNode = do
     SrcLoc l <- loc
     _ <- expectLoc (== '<') $ error "parseTag: expected <"
-    c <- peek
-    when (c == '?') (skip 1)
-    name  <- parseName
-    do -- lazily parse the attributes
+    bs0@(PS fptr _ _) <- useE asBS
+    bs <- if (w2c (BS.unsafeHead bs0) == '?')
+            then do
+               let bs = BS.unsafeTail bs0
+               put $ view (indexPtr._1) bs
+               return bs
+            else
+               return bs0
+    name <- parseName
+    do
         attrs <- parseAttrs
-        c <- pop
-        n <- peek
-        fptr <- ask
+        bs <- useE asBS
+        let c = w2c $ BS.unsafeHead bs
+        let n = w2c $ BS.unsafeIndex bs 1
         if (c == '/' || c == '?') && n == '>'
           then do
-            skip 1
+            put $ Str.drop 2 $ view (indexPtr._1) bs
             return(Node name l fptr attrs [])
           else do
             unless(c == '>') $ throwLoc (UnterminatedTag name)
+            put $ Str.drop 1 $ view (indexPtr._1) bs
             nn <- parseContents
-            (next1, next2) <- (,) <$> pop <*> pop
-            case (next1, next2) of
+            bs <- useE asBS
+            case (w2c$BS.unsafeHead bs, w2c$BS.unsafeIndex bs 1) of
               ('<', '/') -> do
                 let n = (name,fptr) ^. from indexPtr
-                matchTag <- useE (asBS . to (n `BS.isPrefixOf`))
+                let matchTag = n `BS.isPrefixOf` BS.unsafeDrop 2 bs
                 unless matchTag $ throwLoc (ClosingTagMismatch name)
-                cursor %= Str.drop (Str.length name)
+                put $ Str.drop (Str.length name + 2) $ view (indexPtr._1) bs
                 _ <- find '>'
                 skip 1
               _ -> throwLoc(UnterminatedTag name)
