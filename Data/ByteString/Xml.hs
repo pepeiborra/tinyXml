@@ -23,11 +23,7 @@ childrenBy :: Node -> Str -> [Node]
 childrenBy p s = filter (\n -> name n == s) $ children p
 
 attributeBy :: Node -> Str -> Maybe Attribute
-attributeBy n s = getAlt $ foldMap (\a -> Alt(a <$ guard(s == nameA a))) $ attributes n
---  listToMaybe $ filter (\(Attribute a _) -> a == s) $ attributes n
-
-location :: Document -> Node -> (Int, Int)
-location Doc{ptr=src} n@(Node _ s _ _) =
+attributeBy n s = n ^? attributes.each .filtered(\a -> nameA a == s)
   BS.foldl' f (pair 1 1) $ BS.take (fromIntegral s) src
     where
         pair !a !b = (a,b)

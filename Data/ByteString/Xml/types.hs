@@ -1,4 +1,7 @@
-{-# LANGUAGE TemplateHaskell, BangPatterns, DisambiguateRecordFields, DuplicateRecordFields, NamedFieldPuns #-}
+{-# LANGUAGE TemplateHaskell #-}
+{-# LANGUAGE BangPatterns #-}
+{-# LANGUAGE DisambiguateRecordFields, DuplicateRecordFields, NamedFieldPuns #-}
+{-# LANGUAGE MultiParamTypeClasses #-}
 module Data.ByteString.Xml.Types where
 
 import Control.Lens
@@ -42,23 +45,58 @@ data NodeContent =
   NodeChild {-# UNPACK #-} !Node
   deriving Show
 
+data AttributeList =
+    ASnoc !AttributeList {-# UNPACK #-} !Attribute
+  | ANil
+  deriving Show
+data NodeContentList =
+    CSnoc !NodeContentList !NodeContent
+  | CNil
+  deriving Show
+
 data Node =
   Node
   { name       :: {-# UNPACK #-} !Str,
     start      :: {-# UNPACK #-} !Int,
     source     :: {-# UNPACK #-} !(ForeignPtr Word8),
-    attributes :: !(Seq Attribute),
-    contents   :: !(Seq NodeContent)
+    _attributes :: !AttributeList,
+    contents   :: !NodeContentList
   }
 
 instance Show Node where
-  show Node{name,attributes,contents} =
-    show (name,attributes,contents)
+  show Node{name,_attributes,contents} =
+    show (name,_attributes,contents)
+
+makeLenses ''Node
+
+{- Magical Lens dust to dress things as lists -}
+
+makePrisms ''AttributeList
+
+instance Each AttributeList AttributeList Attribute Attribute where
+  each f (ASnoc al a) = flip ASnoc <$> f a <*> each f al
+  each _ ANil = pure ANil
+
+instance Snoc AttributeList AttributeList Attribute Attribute where _Snoc = _ASnoc
+
+instance AsEmpty AttributeList where _Empty = _ANil
+
+makePrisms ''NodeContentList
+
+instance Each NodeContentList NodeContentList NodeContent NodeContent where
+  each _ CNil = pure CNil
+  each f (CSnoc nl n) = flip CSnoc <$> f n <*> each f nl
+
+instance Snoc NodeContentList NodeContentList NodeContent NodeContent where _Snoc = _CSnoc
+
+instance AsEmpty NodeContentList where _Empty = _CNil
 
 makePrisms ''NodeContent
 
 instance Plated Node where
-  plate f (Node n l s a nn) = Node n l s a <$> traverse (_NodeChild f) nn
+  plate f (Node n l s a nn) = Node n l s a <$> each (_NodeChild f) nn
+
+{- Error types -}
 
 newtype SrcLoc = SrcLoc Int deriving Show
 

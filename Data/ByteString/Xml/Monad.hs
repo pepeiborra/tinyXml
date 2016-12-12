@@ -102,8 +102,9 @@ instance Monad (ParseMonad s) where
   return = pure
   {-# INLINE (>>=) #-}
   PM m >>= k = PM $ \ps -> do
-    a <- m ps
-    unPM (k a) ps
+    !a <- m ps
+    !res <- unPM (k a) ps
+    return res
 
 instance MonadState ParseState (ParseMonad s) where
   {-# INLINE state #-} -- version in transformers lacks inline pragma

@@ -97,7 +97,7 @@ parseAttrVal = do
     Nothing -> throwLoc BadAttributeForm
 
 {-# INLINE parseAttrs #-}
-parseAttrs = go mempty where
+parseAttrs = go Empty where
   go acc = do
     trim
     n <- parseName
@@ -129,7 +129,7 @@ parseNode = do
         if (c == '/' || c == '?') && n == '>'
           then do
             put $ Str.drop 2 $ view (indexPtr._1) bs
-            return(Node name l fptr attrs [])
+            return(Node name l fptr attrs Empty)
           else do
             unless(c == '>') $ throwLoc (UnterminatedTag name)
             put $ Str.drop 1 $ view (indexPtr._1) bs
@@ -164,7 +164,7 @@ dropComments = do
           _ <- dropComments
           return True
 
-parseContents = go mempty where
+parseContents = go Empty where
   go acc = do
     trim
     open <- find '<'
@@ -215,7 +215,7 @@ parse bs = unsafePerformIO $ do
   res <- try $ evaluate $ runPM bs parseContents
   return$ case res of
     Right it ->
-      Right $ Node rootStr 0 rootPtr [] it
+      Right $ Node rootStr 0 rootPtr Empty it
     Left (SomeException e) ->
       Left (show e)
 
