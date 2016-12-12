@@ -111,8 +111,8 @@ newtype SrcLoc = SrcLoc Int deriving Show
 data Error = Error ErrorType CallStack
 data ErrorType =
     UnterminatedComment !SrcLoc
-  | UnterminatedTag !Str !SrcLoc
-  | ClosingTagMismatch !Str !SrcLoc
+  | UnterminatedTag !String !SrcLoc
+  | ClosingTagMismatch !String !SrcLoc
   | JunkAtTheEnd !Str !SrcLoc
   | UnexpectedEndOfStream
   | BadAttributeForm !SrcLoc
