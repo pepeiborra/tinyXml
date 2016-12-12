@@ -43,7 +43,7 @@ skip n = cursor %= Str.drop n
 {-# INLINE pop #-}
 pop = do
   bs@(PS _ o l) <- useE asBS
-  put $ Str (o+1) (l-1)
+  put $! Str (o+1) (l-1)
   return (w2c $ BS.unsafeHead bs)
 
 {-# INLINE find #-}
@@ -53,7 +53,7 @@ find c = do
     Nothing ->
       return Nothing
     Just i -> do
-      let str = bs ^. indexPtr . _1
+      let !str = bs ^. indexPtr . _1
       let !prefix = Str.take i str
       put $! Str.drop i str
       return (Just prefix)
@@ -78,7 +78,7 @@ parseName = do
     False -> return strEmpty
     True  -> do
       let (name :: Str, rest) = BS.span isName bs & each %~ view (indexPtr._1)
-      put rest
+      put $! rest
       return name
  where
     isName1 c = parseTable ! ord c == Name1
@@ -116,7 +116,7 @@ parseNode = do
     bs <- if (w2c (BS.unsafeHead bs0) == '?')
             then do
                let bs = BS.unsafeTail bs0
-               put $ view (indexPtr._1) bs
+               put $! view (indexPtr._1) bs
                return bs
             else
                return bs0
@@ -128,11 +128,11 @@ parseNode = do
         let n = w2c $ BS.unsafeIndex bs 1
         if (c == '/' || c == '?') && n == '>'
           then do
-            put $ Str.drop 2 $ view (indexPtr._1) bs
             return(Node name l fptr attrs Empty)
+            put $! Str.drop 2 $ view (indexPtr._1) bs
           else do
             unless(c == '>') $ throwLoc (UnterminatedTag name)
-            put $ Str.drop 1 $ view (indexPtr._1) bs
+            put $! Str.drop 1 $ view (indexPtr._1) bs
             nn <- parseContents
             bs <- useE asBS
             case (w2c$BS.unsafeHead bs, w2c$BS.unsafeIndex bs 1) of
@@ -140,8 +140,8 @@ parseNode = do
                 let n = (name,fptr) ^. from indexPtr
                 let matchTag = n `BS.isPrefixOf` BS.unsafeDrop 2 bs
                 unless matchTag $ throwLoc (ClosingTagMismatch name)
-                put $ Str.drop (Str.length name + 2) $ view (indexPtr._1) bs
                 _ <- find '>'
+                put $! Str.drop (Str.length name + 2) $ view (indexPtr._1) bs
                 skip 1
               _ -> throwLoc(UnterminatedTag name)
             return (Node name l fptr attrs nn)
@@ -160,7 +160,7 @@ dropComments = do
         (_,rest) | BS.null rest ->
           throwLoc UnfinishedComment
         (_, rest) -> do
-          put $ Str.drop 3 $ view (indexPtr._1) rest
+          put $! Str.drop 3 $ view (indexPtr._1) rest
           _ <- dropComments
           return True
 
