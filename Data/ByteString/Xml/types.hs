@@ -40,38 +40,47 @@ data Attribute =
 
 newtype Source = Source ByteString
 
-data NodeContent =
-  NodeText  {-# UNPACK #-} !Str |
-  NodeChild {-# UNPACK #-} !Node
-  deriving Show
+data ElementData =
+    ElementData
+            { _name       :: {-# UNPACK #-} !Str
+            , _attributes :: !AttributeList
+            , _contents   :: !NodeList }
+    deriving Show
+
+data NodeType =
+    Text {-# UNPACK #-} !Str
+  | Element {-# UNPACK #-} !ElementData deriving Show
 
 data AttributeList =
     ASnoc !AttributeList {-# UNPACK #-} !Attribute
   | ANil
   deriving Show
-data NodeContentList =
-    CSnoc !NodeContentList !NodeContent
-  | CNil
+
+data NodeList =
+    NSnoc !NodeList {-# UNPACK #-} !Node
+  | NNil
   deriving Show
 
 data Node =
   Node
-  { name       :: {-# UNPACK #-} !Str,
-    start      :: {-# UNPACK #-} !Int,
-    source     :: {-# UNPACK #-} !(ForeignPtr Word8),
-    _attributes :: !AttributeList,
-    contents   :: !NodeContentList
+  { _source     :: {-# UNPACK #-} !(ForeignPtr Word8),
+    _details    :: !NodeType
   }
 
 instance Show Node where
-  show Node{name,_attributes,contents} =
-    show (name,_attributes,contents)
+  show Node{_source, _details = Element ElementData{_name,_attributes,_contents} } =
+    show ((_name,_source)^.from indexPtr, _attributes, _contents)
+  show Node{_source, _details=Text txt} =
+    show $ (txt,_source) ^. from indexPtr
 
 makeLenses ''Node
+makeLenses ''NodeType
+makeLenses ''ElementData
+makePrisms ''NodeType
+makePrisms ''AttributeList
+makePrisms ''NodeList
 
 {- Magical Lens dust to dress things as lists -}
-
-makePrisms ''AttributeList
 
 instance Each AttributeList AttributeList Attribute Attribute where
   each f (ASnoc al a) = flip ASnoc <$> f a <*> each f al
@@ -81,20 +90,18 @@ instance Snoc AttributeList AttributeList Attribute Attribute where _Snoc = _ASn
 
 instance AsEmpty AttributeList where _Empty = _ANil
 
-makePrisms ''NodeContentList
+instance Each NodeList NodeList Node Node where
+  each _ NNil = pure NNil
+  each f (NSnoc nl n) = flip NSnoc <$> f n <*> each f nl
 
-instance Each NodeContentList NodeContentList NodeContent NodeContent where
-  each _ CNil = pure CNil
-  each f (CSnoc nl n) = flip CSnoc <$> f n <*> each f nl
+instance Snoc NodeList NodeList Node Node where _Snoc = _NSnoc
 
-instance Snoc NodeContentList NodeContentList NodeContent NodeContent where _Snoc = _CSnoc
+instance AsEmpty NodeList where _Empty = _NNil
 
-instance AsEmpty NodeContentList where _Empty = _CNil
-
-makePrisms ''NodeContent
+makePrisms ''Node
 
 instance Plated Node where
-  plate f (Node n l s a nn) = Node n l s a <$> each (_NodeChild f) nn
+  plate f (Node s nt) = Node s <$> (_Element.contents) (each f) nt
 
 {- Error types -}
 
@@ -108,6 +115,7 @@ data ErrorType =
   | JunkAtTheEnd !Str !SrcLoc
   | UnexpectedEndOfStream
   | BadAttributeForm !SrcLoc
+  | BadTagForm !SrcLoc
   | UnfinishedComment !SrcLoc
   | Garbage !SrcLoc
    deriving Show
