@@ -93,7 +93,7 @@ parseAttrVal = do
   c  <- expectLoc (liftA2 (||) (== '\'') (== '\"')) BadAttributeForm
   attrVal <- find c
   case attrVal of
-    Just x ->  pop *> return x
+    Just x ->  skip 1 *> return x
     Nothing -> throwLoc BadAttributeForm
 
 {-# INLINE parseAttrs #-}
