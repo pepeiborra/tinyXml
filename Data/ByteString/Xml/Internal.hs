@@ -31,55 +31,50 @@ import System.IO.Unsafe
 import Data.ByteString.Xml.Monad
 import Data.ByteString.Xml.Types as Str
 
-peekAt :: MonadParse m =>Int -> m (Char)
-peekAt n = useE(asBS .to (w2c . (`BS.unsafeIndex` n)))
+peekAt n = fmap w2c $ bsIndex n
 
 {-# INLINE peek #-}
-peek :: MonadParse m => m (Char)
-peek = useE (asBS . to (w2c . BS.unsafeHead))
+peek = fmap w2c bsHead
 
 {-# INLINE skip #-}
 skip n = cursor %= Str.drop n
 
 {-# INLINE pop #-}
 pop = do
-  bs@(PS _ o l) <- useE asBS
-  put $! Str (o+1) (l-1)
-  return (w2c $ BS.unsafeHead bs)
+  c <- bsHead
+  skip 1
+  return (w2c c)
 
 {-# INLINE find #-}
-find c bs =
-  case BS.elemIndex c bs of
+find !c  = do
+  x <- bsElemIndex c
+  case x of
     Nothing ->
-      (Nothing,bs)
-    Just i -> do
-      let !str = bs ^. indexPtr . _1
-      let !prefix = Str.take i str
-      let !bs' = BS.drop i bs
-      (Just prefix, bs')
+      return Nothing
+    Just !i -> do
+      !prefix <- gets (Str.take i)
+      cursor %= Str.drop i
+      return $ Just prefix
 
 {-# INLINE trim #-}
-trim :: MonadParse m => m ()
 trim =
-  asBS %== BS.dropWhile isSpace
+  bsDropWhile isSpace
     where
-      isSpace c = parseTable ! ord c == Space
+      isSpace !c = parseTable ! ord c == Space
 
 {-# INLINE expectLoc #-}
 expectLoc pred e = do
-  c <- pop
-  when (not$ pred c) $ throwLoc e
+  !c <- pop
+  when (not$ pred c) $ throwLoc(e c)
   return c
 
 {-# INLINE parseName #-}
 parseName = do
-  bs <- useE asBS
-  let first = w2c $ BS.unsafeHead bs
+  !first <- peek
   case isName1 first of
     False -> return strEmpty
     True  -> do
-      let (name :: Str, rest) = BS.span isName bs & each %~ view (indexPtr._1)
-      put $! rest
+      !name <- bsDropWhile isName
       return name
  where
     isName1 c = parseTable ! ord c == Name1
@@ -89,10 +84,10 @@ parseName = do
 {-# INLINE parseAttrVal #-}
 parseAttrVal = do
   trim
-  _ <- expectLoc (== '=') BadAttributeForm
+  _ <- expectLoc (== '=') (const BadAttributeForm)
   trim
-  c  <- expectLoc (liftA2 (||) (== '\'') (== '\"')) BadAttributeForm
-  attrVal <- stateE asBS (find c)
+  !c  <- expectLoc (liftA2 (||) (== '\'') (== '\"')) (const BadAttributeForm)
+  attrVal <- find c
   case attrVal of
     Just x ->  skip 1 *> return x
     Nothing -> throwLoc BadAttributeForm
@@ -101,51 +96,45 @@ parseAttrVal = do
 parseAttrs = go Empty where
   go acc = do
     trim
-    n <- parseName
+    !n <- parseName
     if Str.null n
       then return acc
       else do
-        v <- parseAttrVal
+        !v <- parseAttrVal
         go (acc |> Attribute n v)
 
 -- | Parse until </
 {-# INLINE parseNode #-}
-parseNode :: MonadParse m => m ElementData
 parseNode = do
-    _ <- expectLoc (== '<') $ error "parseTag: expected <"
-    bs0@(PS fptr _ _) <- useE asBS
-    bs <- if (w2c (BS.unsafeHead bs0) == '?')
-            then do
-               let bs = BS.unsafeTail bs0
-               put $! view (indexPtr._1) bs
-               return bs
-            else
-               return bs0
-    name <- parseName
+    _ <- expectLoc (== '<') $ \c -> error( "parseNode: expected < got " ++ [c] )
+    !c <- peek
+    when (c == '?') (skip 1)
+    !name <- parseName
     do
-        attrs <- parseAttrs
-        bs <- useE asBS
-        let c = w2c $ BS.unsafeHead bs
-        let n = w2c $ BS.unsafeIndex bs 1
+        !attrs <- parseAttrs
+        !c <- pop
+        !n <- peek
         if (c == '/' || c == '?') && n == '>'
           then do
-            put $! Str.drop 2 $ view (indexPtr._1) bs
+            skip 1
             return(ElementData name attrs Empty)
           else do
-            unless(c == '>') $ throwLoc (UnterminatedTag name)
-            put $! Str.drop 1 $ view (indexPtr._1) bs
-            nn <- parseContents
-            bs <- useE asBS
-            case (w2c$BS.unsafeHead bs, w2c$BS.unsafeIndex bs 1) of
+            !fptr <- ask
+            let !nameStr = (name,fptr) ^. from indexPtr
+            unless(c == '>') $
+              throwLoc (UnterminatedTag$ BS.unpack nameStr)
+            !nn <- parseContents
+            !c <- pop
+            !n <- pop
+            case (c,n) of
               ('<', '/') -> do
-                let n = (name,fptr) ^. from indexPtr
-                let matchTag = n `BS.isPrefixOf` BS.unsafeDrop 2 bs
-                unless matchTag $ throwLoc (ClosingTagMismatch name)
-                let (bracket, bs')
-                      = find '>' $ BS.unsafeDrop (Str.length name + 2) $ bs
-                put $! Str.drop 1 $ view (indexPtr._1) bs'
+                !matchTag <- bsIsPrefix nameStr
+                unless matchTag $ throwLoc (ClosingTagMismatch $ show nameStr)
+                skip (Str.length name)
+                !bracket <- find '>'
+                skip 1
                 unless(isJust bracket) $ throwLoc BadTagForm
-              _ -> throwLoc(UnterminatedTag name)
+              _ -> throwLoc(UnterminatedTag $ BS.unpack nameStr)
             return (ElementData name attrs nn)
 
 commentEnd :: ByteString -> (ByteString, ByteString)
@@ -154,12 +143,13 @@ commentEnd   = BS.breakSubstring $ BS.pack "-->"
 
 {-# INLINE dropComments #-}
 dropComments = do
-  bs <- useE asBS
-  case "<!--" `BS.isPrefixOf` bs of
+  x <- bsIsPrefix "<!--"
+  case x of
     False ->
       return False
-    True ->
-      case commentEnd (BS.drop 4 bs) of
+    True -> do
+      bs <- useE asBS
+      case commentEnd (BS.unsafeDrop 4 bs) of
         (_,rest) | BS.null rest ->
           throwLoc UnfinishedComment
         (_, rest) -> do
@@ -167,8 +157,6 @@ dropComments = do
           _ <- dropComments
           return True
 
-parseContents :: MonadParse m => m NodeList
-{-# SPECIALIZE parseContents :: ParseMonad s NodeList #-}
 parseContents = do
   fptr <- ask
   let appendNonNullPrefix bs
@@ -176,21 +164,21 @@ parseContents = do
        | otherwise  = (|> Node fptr (Text bs))
   let go acc = do
         trim
-        open <- stateE asBS $ find '<'
+        !open <- find '<'
         case open of
-          Just prefix -> do
-            next <- peekAt 1
+          Just !prefix -> do
+            !next <- peekAt 1
             case next of
               -- end of tag </
               '/' -> return (appendNonNullPrefix prefix acc)
               _ -> do
-                wasComment <- dropComments
+                !wasComment <- dropComments
                 if wasComment
                   then
                     -- recurse
                     go acc
                   else do
-                    n <- parseNode
+                    !n <- parseNode
                     go (appendNonNullPrefix prefix acc |> Node fptr (Element n))
           -- no tag
           _ -> do
