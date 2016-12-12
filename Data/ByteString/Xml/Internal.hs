@@ -59,6 +59,7 @@ find c = do
       return (Just prefix)
 
 {-# INLINE trim #-}
+trim :: MonadParse m => m ()
 trim =
   asBS %== BS.dropWhile isSpace
     where
@@ -109,6 +110,7 @@ parseAttrs = go Empty where
 
 -- | Parse until </
 {-# INLINE parseNode #-}
+parseNode :: MonadParse m => m ElementData
 parseNode = do
     SrcLoc l <- loc
     _ <- expectLoc (== '<') $ error "parseTag: expected <"
@@ -147,6 +149,7 @@ parseNode = do
             return (Node name l fptr attrs nn)
 
 commentEnd :: ByteString -> (ByteString, ByteString)
+{-# INLINE commentEnd #-}
 commentEnd   = BS.breakSubstring $ BS.pack "-->"
 
 {-# INLINE dropComments #-}
@@ -174,6 +177,8 @@ parseContents = go Empty where
         case next of
           -- end of tag </
           '/' -> return (appendNonNullPrefix prefix acc)
+parseContents :: MonadParse m => m NodeList
+{-# SPECIALIZE parseContents :: ParseMonad s NodeList #-}
           _ -> do
             wasComment <- dropComments
             if wasComment
