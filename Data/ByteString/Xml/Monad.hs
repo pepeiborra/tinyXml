@@ -107,6 +107,10 @@ bsElemIndex c = PM$ \_ p o l ->
 
 bsDropWhile f = PM$ \_ p o l ->
   let !i_n@(I# n) = accursedUnutterablePerformIO $ findIndexOrEnd (not.f.w2c) p (I# o) (I# l)
+  in (# (), o +# n, l -# n #)
+
+bsSpan f = PM$ \_ p o l ->
+  let !i_n@(I# n) = accursedUnutterablePerformIO $ findIndexOrEnd (not.f.w2c) p (I# o) (I# l)
   in (# Str (I# o) i_n, o +# n, l -# n #)
 
 findIndexOrEnd k f o l = go (f `plusPtr` o) 0 where

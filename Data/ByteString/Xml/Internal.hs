@@ -23,7 +23,8 @@ import Data.ByteString.Unsafe as BS
 import qualified Data.ByteString.Char8 as BS
 import Data.ByteString.Internal (w2c, ByteString(..))
 import Data.Char hiding (Space)
-import Data.Array.IArray
+import Data.Array.Unboxed
+import Data.Array.Base as A
 import Data.Sequence (Seq)
 import Control.Lens hiding ((%=),(.=), use) -- redefined locally due to bad inlining
 import System.IO.Unsafe
@@ -40,19 +41,19 @@ peek = fmap w2c bsHead
 skip n = cursor %= Str.drop n
 
 {-# INLINE pop #-}
-pop = do
-  c <- bsHead
+pop = {-# SCC "pop" #-} do
+  !c <- bsHead
   skip 1
   return (w2c c)
 
 {-# INLINE find #-}
 find !c  = do
-  x <- bsElemIndex c
+  !x <- bsElemIndex c
   case x of
     Nothing ->
       return Nothing
     Just !i -> do
-      !prefix <- gets (Str.take i)
+      !prefix <- Str.take i <$> get
       cursor %= Str.drop i
       return $ Just prefix
 
@@ -60,7 +61,7 @@ find !c  = do
 trim =
   bsDropWhile isSpace
     where
-      isSpace !c = parseTable ! ord c == Space
+      isSpace !c = spaceTable `unsafeAt` ord c
 
 {-# INLINE expectLoc #-}
 expectLoc pred e = do
@@ -69,16 +70,16 @@ expectLoc pred e = do
   return c
 
 {-# INLINE parseName #-}
-parseName = do
+parseName = {-# SCC "parseTrue" #-} do
   !first <- peek
-  case isName1 first of
+  case isTrue first of
     False -> return strEmpty
     True  -> do
-      !name <- bsDropWhile isName
+      !name <- bsSpan isName
       return name
  where
-    isName1 c = parseTable ! ord c == Name1
-    isName c = let x = parseTable ! ord c in x == Name || x == Name1
+    isTrue c = nameTable1 `unsafeAt` ord c
+    isName c = nameTable `unsafeAt` ord c
 
 -- | Assumes cursor is on a '='
 {-# INLINE parseAttrVal #-}
@@ -96,7 +97,7 @@ parseAttrVal = do
 parseAttrs = go Empty where
   go acc = do
     trim
-    !n <- parseName
+    !n <-{-# SCC "parseName" #-} parseName
     if Str.null n
       then return acc
       else do
@@ -109,9 +110,9 @@ parseNode = do
     _ <- expectLoc (== '<') $ \c -> error( "parseNode: expected < got " ++ [c] )
     !c <- peek
     when (c == '?') (skip 1)
-    !name <- parseName
+    !name <- {-# SCC "parseName" #-} parseName
     do
-        !attrs <- parseAttrs
+        !attrs <- {-# SCC "parseAttrs" #-}parseAttrs
         !c <- pop
         !n <- peek
         if (c == '/' || c == '?') && n == '>'
@@ -130,7 +131,7 @@ parseNode = do
               ('<', '/') -> do
                 !matchTag <- bsIsPrefix nameStr
                 unless matchTag $ throwLoc (ClosingTagMismatch $ show nameStr)
-                skip (Str.length name)
+                skip $! (Str.length name)
                 !bracket <- find '>'
                 skip 1
                 unless(isJust bracket) $ throwLoc BadTagForm
@@ -143,12 +144,12 @@ commentEnd   = BS.breakSubstring $ BS.pack "-->"
 
 {-# INLINE dropComments #-}
 dropComments = do
-  x <- bsIsPrefix "<!--"
+  !x <- bsIsPrefix "<!--"
   case x of
     False ->
       return False
     True -> do
-      bs <- useE asBS
+      !bs <- useE asBS
       case commentEnd (BS.unsafeDrop 4 bs) of
         (_,rest) | BS.null rest ->
           throwLoc UnfinishedComment
@@ -172,7 +173,7 @@ parseContents = do
               -- end of tag </
               '/' -> return (appendNonNullPrefix prefix acc)
               _ -> do
-                !wasComment <- dropComments
+                !wasComment <- {-# SCC "dropComments" #-} dropComments
                 if wasComment
                   then
                     -- recurse
@@ -187,24 +188,33 @@ parseContents = do
   go Empty
 
 
-type ParseTable = Array Int ParseType
-
-data ParseType = Name1 | Name | Space | Other deriving (Eq,Show)
+type ParseTable = UArray Int Bool
 
 -- TODO compute at compile time?
-parseTable :: ParseTable
-parseTable =
+spaceTable,nameTable,nameTable1 :: ParseTable
+spaceTable = listArray (0,255) [ isSpace (chr i) | i <- [0..255]]
+
+nameTable =
   listArray (0,255)
   [ case chr i of
-      ':' -> Name1
-      '_' -> Name1
-      c | isLetter c -> Name1
-      '-' -> Name
-      c | isDigit c -> Name
-      c | isSpace c -> Space
-      _   -> Other
+      ':' -> True
+      '_' -> True
+      c | isLetter c -> True
+      '-' -> True
+      c | isDigit c -> True
+      _   -> False
     | i <- [0..255]
     ]
+nameTable1 =
+  listArray (0,255)
+  [ case chr i of
+      ':' -> True
+      '_' -> True
+      c | isLetter c -> True
+      _   -> False
+    | i <- [0..255]
+    ]
+
 
 parse :: ByteString -> Either String Node
 parse bs = unsafePerformIO $ do

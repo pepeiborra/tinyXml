@@ -7,9 +7,11 @@ executable-profiling: True
 profiling: True
 
 package bytestring-xml
-  profiling-detail: exported-functions
+  profiling-detail: none
   tests: False
   benchmarks: False
+  optimization: 2
+  ghc-options: 
 
 package bytestring
   profiling-detail: exported-functions
