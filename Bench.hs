@@ -29,11 +29,11 @@ main = do
   paths <- getArgs
 
   let suite =
-        [ env (BS.readFile p) $ \xml -> bgroup p
-            [ bench "hexml" $ whnf (process . Hexml.parse) xml
-            , bench "us" $ whnf (process . parse) xml
---            , bench "xml" $ nf (parseXML) contents
---            , bench "xml-conduit" $ whnfIO $ XML.readFile def p
+        [ env ((,) <$> BS.readFile p <*> readFile p) $ \ ~(bs,s) -> bgroup p
+            [ bench "hexml" $ whnf (process . Hexml.parse) bs
+            , bench "bytestring-xml" $ whnf (process . parse) bs
+            , bench "xml" $ nf parseXML s
+            , bench "xml-conduit" $ whnfIO $ XML.readFile def p
             ]
         | p <- paths ]
 
