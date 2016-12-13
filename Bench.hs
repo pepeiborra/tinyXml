@@ -10,6 +10,7 @@ import Data.Monoid
 import qualified Data.ByteString.Char8 as BS
 import qualified Text.XML.Hexml as Hexml
 
+import System.Process (callCommand)
 import System.IO
 import System.Environment
 
@@ -22,22 +23,27 @@ import Criterion.Main
 
 import GHC.Generics (Generic)
 
-process :: Show a => Either a b -> String
+process :: (Show a, Show b) => Either a b -> String
 process = either (error.show) (const "Success")
 
 main = do
-  paths <- getArgs
-
+  paths0 <- getArgs
+  paths <- case paths0 of
+    _ : _ -> return paths0
+    [] -> do
+      callCommand "tar xf benchmark.tar.bz"
+      return ["benchmark.xml"]
   let suite =
-        [ env (BS.readFile p) $ \xml -> bgroup p
-            [ bench "hexml" $ whnf (process . Hexml.parse) xml
-            , bench "us" $ whnf (process . parse) xml
---            , bench "xml" $ nf (parseXML) contents
---            , bench "xml-conduit" $ whnfIO $ XML.readFile def p
+        [ env ((,) <$> BS.readFile p <*> readFile p) $ \ ~(bs,s) -> bgroup p
+            [
+              bench "bytestring-xml" $ whnf (process . parse) bs
+            , bench "hexml" $ whnf (process . Hexml.parse) bs
+--            , bench "xml" $ whnf (length . parseXML) s
+         --   , bench "xml-conduit" $ whnfIO $ XML.readFile def p
             ]
         | p <- paths ]
 
-  defaultMain suite 
+  defaultMain suite
 
 deriving instance Generic Content
 deriving instance Generic Element
