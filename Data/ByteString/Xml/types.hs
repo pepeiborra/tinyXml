@@ -1,124 +1,79 @@
 {-# LANGUAGE TemplateHaskell #-}
 {-# LANGUAGE BangPatterns #-}
 {-# LANGUAGE DisambiguateRecordFields, DuplicateRecordFields, NamedFieldPuns #-}
+{-# LANGUAGE ScopedTypeVariables #-}
+{-# LANGUAGE FlexibleInstances #-}
+{-# LANGUAGE RecordWildCards #-}
 {-# LANGUAGE MultiParamTypeClasses #-}
+{-# LANGUAGE DeriveFunctor #-}
+{-# LANGUAGE ViewPatterns #-}
+
 module Data.ByteString.Xml.Types where
 
 import Control.Lens
+import Control.Exception
 import Data.ByteString.Char8 (ByteString)
 import Data.ByteString.Internal (ByteString(..))
-import Data.Sequence
+import Data.List (genericTake)
+import Data.Vector.Storable (Vector)
 import Data.Word
 import GHC.Stack hiding (SrcLoc)
 import Foreign.ForeignPtr       (ForeignPtr, withForeignPtr)
+import Foreign.C.Types
+import Foreign
 
--- Alternative design - a shrunk version of ByteString relative to a ForeignPtr
-data Str =
-  Str { offset :: {-# UNPACK #-} !Int, length :: {-# UNPACK #-} !Int }
+import Config
+
+data Slice =
+  Slice { offset :: {-# UNPACK #-} !Int32, length :: {-# UNPACK #-} !Int32 }
   deriving (Eq,Show)
 
-strEmpty = Str 0 0
+instance Storable Slice where
+    sizeOf _ = 8
+    alignment _ = alignment (0 :: Int64)
+    peek p = Slice <$> peekByteOff p 0 <*> peekByteOff p 4
+    poke p Slice{..} = pokeByteOff p 0 offset >> pokeByteOff p 4 length
+
+sliceEmpty = Slice 0 0
+sliceFromOpen o = Slice (fromIntegral o) 0
+sliceFromOpenClose (fromIntegral->open) (fromIntegral->close) = Slice open (close-open)
 {-# INLINE null #-}
-null (Str _ l) = l == 0
+null (Slice _ l) = l == 0
 {-# INLINE take #-}
-take i (Str o l) = Str o i -- unsafe
+take i (Slice o _l) = Slice o (fromIntegral i) -- unsafe
 {-# INLINE drop #-}
-drop i (Str o l) = Str (o+i) (l-i) -- unsafe
+drop i' (Slice o l) = let i = fromIntegral i' in Slice (o+i) (l-i) -- unsafe
+
+sliceStart s = offset s
+sliceEnd (Slice o l) = o + l
+
+toList :: Slice -> [Int]
+toList (Slice o l) = genericTake l [ fromIntegral o ..]
 
 {-# INLINE indexPtr #-}
-indexPtr :: Iso' ByteString (Str, ForeignPtr Word8)
+indexPtr :: Iso' ByteString (Slice, ForeignPtr Word8)
 indexPtr = iso fromBS toBS where
-  fromBS (PS fptr o l) = (Str o l, fptr)
-  toBS (Str o l, fptr) = PS fptr o l
-
-data Attribute =
-  Attribute
-  { nameA :: {-# UNPACK #-}!Str,
-    value :: {-# UNPACK #-}!Str
-  }
-  deriving (Eq, Show)
-
-newtype Source = Source ByteString
-
-data ElementData =
-    ElementData
-            { _name       :: {-# UNPACK #-} !Str
-            , _attributes :: !AttributeList
-            , _contents   :: !NodeList }
-    deriving Show
-
-data NodeType =
-    Text {-# UNPACK #-} !Str
-  | Element {-# UNPACK #-} !ElementData deriving Show
-
-data AttributeList =
-    ASnoc !AttributeList {-# UNPACK #-} !Attribute
-  | ANil
-  deriving Show
-
-data NodeList =
-    NSnoc !NodeList {-# UNPACK #-} !Node
-  | NNil
-  deriving Show
-
-data Node =
-  Node
-  { _source     :: {-# UNPACK #-} !(ForeignPtr Word8),
-    _details    :: !NodeType
-  }
-
-instance Show Node where
-  show Node{_source, _details = Element ElementData{_name,_attributes,_contents} } =
-    show ((_name,_source)^.from indexPtr, _attributes, _contents)
-  show Node{_source, _details=Text txt} =
-    show $ (txt,_source) ^. from indexPtr
-
-makeLenses ''Node
-makeLenses ''NodeType
-makeLenses ''ElementData
-makePrisms ''NodeType
-makePrisms ''AttributeList
-makePrisms ''NodeList
-
-{- Magical Lens dust to dress things as lists -}
-
-instance Each AttributeList AttributeList Attribute Attribute where
-  each f (ASnoc al a) = flip ASnoc <$> f a <*> each f al
-  each _ ANil = pure ANil
-
-instance Snoc AttributeList AttributeList Attribute Attribute where _Snoc = _ASnoc
-
-instance AsEmpty AttributeList where _Empty = _ANil
-
-instance Each NodeList NodeList Node Node where
-  each _ NNil = pure NNil
-  each f (NSnoc nl n) = flip NSnoc <$> f n <*> each f nl
-
-instance Snoc NodeList NodeList Node Node where _Snoc = _NSnoc
-
-instance AsEmpty NodeList where _Empty = _NNil
-
-makePrisms ''Node
-
-instance Plated Node where
-  plate f (Node s nt) = Node s <$> (_Element.contents) (each f) nt
+  fromBS (PS fptr o l) = (Slice (fromIntegral o) (fromIntegral l), fptr)
+  toBS (Slice o l, fptr) = PS fptr (fromIntegral o) (fromIntegral l)
 
 {- Error types -}
 
 newtype SrcLoc = SrcLoc Int deriving Show
 
-data Error = Error ErrorType CallStack
+data Error = Error !ErrorType !CallStack
 data ErrorType =
     UnterminatedComment !SrcLoc
   | UnterminatedTag !String !SrcLoc
   | ClosingTagMismatch !String !SrcLoc
-  | JunkAtTheEnd !Str !SrcLoc
+  | JunkAtTheEnd !Slice !SrcLoc
   | UnexpectedEndOfStream
   | BadAttributeForm !SrcLoc
   | BadTagForm !SrcLoc
   | UnfinishedComment !SrcLoc
   | Garbage !SrcLoc
    deriving Show
+
+instance Exception Error
 
 instance Show Error where
   show (Error etype cs) = show etype ++ prettyCallStack cs

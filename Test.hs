@@ -1,5 +1,6 @@
 
-{-# LANGUAGE OverloadedStrings#-}
+{-# LANGUAGE OverloadedStrings, DisambiguateRecordFields #-}
+
 import Data.ByteString.Xml
 import Data.ByteString.Xml.Types
 import Control.Monad
@@ -22,12 +23,13 @@ examples =
     ,(True, "<?xml version=\"1.1\"?>\n<greeting>Hello, world!</greeting>")
     ]
 
-childrenBy :: Node -> Str -> [Node]
+{-
+childrenBy :: Node -> Slice -> [Node]
 childrenBy n s = n ^.. plate . filtered(\n' -> n' ^? details . _Element . name == Just s)
 
-attributeBy :: Node -> Str -> Maybe Attribute
+attributeBy :: Node -> Slice -> Maybe Attribute
 attributeBy n s = n ^? details._Element.attributes.each .filtered(\a -> nameA a == s)
-
+-}
 main = do
     forM_ examples $ \(parses,src) -> do
          case parse src of
@@ -37,6 +39,7 @@ main = do
               unless parses $ fail ( "Unexpected success on " ++ BS.unpack src)
               print src
               print doc
+
 --     let Right doc = parse "<test id=\"1\" extra=\"2\" />\n<test id=\"2\" /><b><test id=\"3\" /></b><test id=\"4\" /><test />"
 --     map name (children doc) === ["test","test","b","test","test"]
 --     location (children doc !! 2) === (2,16)

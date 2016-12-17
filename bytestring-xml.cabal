@@ -50,39 +50,45 @@ tested-with:         GHC == 7.10.3, GHC == 8.0.1
 
 library
   -- Modules exported by the library.
-  exposed-modules:     Data.ByteString.Xml, Data.ByteString.Xml.Internal, Data.ByteString.Xml.Types
-  
-  -- Modules included in this library but not exported.
-  other-modules:       Data.ByteString.Xml.Monad
-  
+  exposed-modules:     Data.ByteString.Xml,
+                       Data.ByteString.Xml.Types,
+                       Data.ByteString.Xml.Internal,
+                       Data.ByteString.Xml.Internal.Types,
+                       Data.ByteString.Xml.Monad,
+                       Data.VectorBuilder.Storable
+  other-modules:       Config
+
   -- LANGUAGE extensions used by modules in this package.
   other-extensions:    OverloadedStrings, BangPatterns, DisambiguateRecordFields, DuplicateRecordFields, FlexibleContexts, TemplateHaskell, ConstraintKinds, NoMonomorphismRestriction, LambdaCase, OverloadedLists, PartialTypeSignatures
   
   -- Other library packages from which modules are imported.
-  build-depends:       base >=4.9 && <4.10, bytestring >=0.10 && <0.11, mtl >=2.2 && <2.3, array >=0.5 && <0.6, containers >=0.5 && <0.6, lens >=4.15 && <4.16
+  build-depends:       base >=4.9 && <4.10, bytestring >=0.10 && <0.11, mtl >=2.2 && <2.3, array >=0.5 && <0.6, containers >=0.5 && <0.6, lens >=4.15 && <4.16, vector, primitive
   
   -- Directories containing source files.
   -- hs-source-dirs:      
   
   -- Base language which the package is written in.
   default-language:    Haskell2010
-  
+  ghc-options:         -Wno-partial-type-signatures
 test-suite test
         type: exitcode-stdio-1.0
         main-is: Test.hs
         default-language:    Haskell2010
-        build-depends: base, bytestring, bytestring-xml, lens, mtl, containers, array
+        build-depends: base, bytestring, bytestring-xml, lens, mtl, containers, array, vector, primitive
         default-language:    Haskell2010
+        ghc-options:         -Wno-partial-type-signatures
 
 Benchmark bench
         type: exitcode-stdio-1.0
         main-is: Bench.hs
         build-depends:  base, bytestring, bytestring-xml, lens, mtl, containers, array, vector, primitive, hexml, criterion, xml, xml-conduit, deepseq, data-default, process
         default-language:    Haskell2010
-        ghc-options: -rtsopts
+        ghc-options: -rtsopts 
+        ghc-options:         -Wno-partial-type-signatures
 
 Executable validate 
         main-is: Validate.hs
-        build-depends:  base, bytestring, bytestring-xml, lens, mtl, containers, array, hexml
-        ghc-options: -rtsopts
+        build-depends:  base, bytestring, bytestring-xml, lens, mtl, containers, array, vector, primitive, hexml
+        ghc-options: -rtsopts -ddump-simpl -ddump-to-file -dsuppress-all -dppr-cols=150 -dppr-case-as-let
         default-language:    Haskell2010
+        ghc-options:         -Wno-partial-type-signatures
