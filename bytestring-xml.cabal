@@ -69,7 +69,8 @@ library
   
   -- Base language which the package is written in.
   default-language:    Haskell2010
-  ghc-options:         -Wno-partial-type-signatures
+  ghc-options:         -fno-warn-partial-type-signatures
+
 test-suite test
         type: exitcode-stdio-1.0
         main-is: Test.hs
