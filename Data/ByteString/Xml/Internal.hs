@@ -1,4 +1,4 @@
-{-# LANGUAGE DisambiguateRecordFields, DuplicateRecordFields #-}
+{-# LANGUAGE DisambiguateRecordFields #-}
 {-# LANGUAGE FlexibleContexts, FlexibleInstances #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE ConstraintKinds #-}
