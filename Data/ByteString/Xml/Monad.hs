@@ -24,6 +24,7 @@ import Control.Monad.State.Class
 import Data.ByteString.Internal (ByteString(..), c2w, w2c, memchr, memcmp)
 import Data.Int
 import Data.List
+import qualified Data.Vector.Unboxed.Mutable as U
 import qualified Data.Vector.Storable.Mutable as M
 import Data.Word
 import Control.Lens hiding (use)
@@ -49,13 +50,13 @@ data Env s =
       , ptr :: Ptr Word8
       , attributeBuffer :: VectorBuilder s Attribute
       , nodeBuffer :: VectorBuilder s (Node)
+      , slice :: U.MVector s Int32 -- the offset and length in a 2 element vector
       }
 
-newtype ParseMonad s a =
-  PM {unPM :: Env s -> Int32 -> Int32 -> ST s ( a, Int32, Int32 ) }
+newtype ParseMonad s a = PM {unPM :: Env s -> ST s a }
 
 liftST :: ST s a -> ParseMonad s a
-liftST action = PM $ \env o l -> action <$$> (,o,l)
+liftST action = PM $ \env -> action
 
 unsafeLiftIO :: IO a -> ParseMonad s a
 unsafeLiftIO action = liftST (unsafeIOToST action)
@@ -68,9 +69,10 @@ runPM :: ByteString -> (forall s. ParseMonad s a) -> a
 runPM (PS fptr o l) pm = runST $ do
   attributes <- VectorBuilder.new 1000
   nodes      <- VectorBuilder.new 50
-  unsafeIOToST $ withForeignPtr fptr $ \ptr -> unsafeSTToIO $ do
-    ( a, _, _ ) <- unPM pm (Env fptr ptr attributes nodes) (fromIntegral o) (fromIntegral l)
-    return a
+  slice      <- U.new 2
+  U.unsafeWrite slice 0 (fromIntegral o)
+  U.unsafeWrite slice 1 (fromIntegral l)
+  unsafeIOToST $ withForeignPtr fptr $ \ptr -> unsafeSTToIO $ unPM pm (Env fptr ptr attributes nodes slice)
 
 readStr :: Slice -> ParseMonad s ByteString
 readStr str = do
@@ -125,27 +127,46 @@ bsHead :: ParseMonad s Word8
 bsHead = bsIndex 0
 
 bsIndex :: Int -> ParseMonad s Word8
-bsIndex i = PM $ \Env{ptr=p} o l -> unsafeIOToST( peekByteOff p (i + fromIntegral o)) <$$> (, o, l )
+bsIndex i = do
+  Env{ptr=p, slice} <- getEnv
+  o <- U.unsafeRead slice 0
+  unsafeLiftIO( peekByteOff p (i + fromIntegral o))
 
-bsIsPrefix (PS r o' l') = PM$ \Env{ptr=p} o l -> do
-   !resp <-
-        unsafeIOToST $ withForeignPtr r $ \p' ->
+bsIsPrefix (PS r o' l') = do
+  Env{ptr=p, slice} <- getEnv
+  o <- U.unsafeRead slice 0
+  !resp <-
+        unsafeLiftIO $ withForeignPtr r $ \p' ->
           memcmp (p' `plusPtr` o') (p `plusPtr` fromIntegral o) (fromIntegral l')
-   let !res = resp == 0
-   return ( res, o, l )
-bsElemIndex c = PM$ \Env{ptr=p} o l -> do
+  let !res = resp == 0
+  return res
+
+bsElemIndex c = do
+  Env{ptr=p, slice} <- getEnv
+  o <- U.unsafeRead slice 0
+  l <- U.unsafeRead slice 1
   let !p' = p `plusPtr` fromIntegral o
-  !q <- unsafeIOToST $ do memchr p' (c2w c) (fromIntegral l)
+  !q <- unsafeLiftIO $ do memchr p' (c2w c) (fromIntegral l)
   let !res = if q == nullPtr then Nothing else Just $! q `minusPtr` p'
-  return ( res, o, l )
+  return res
 
-bsDropWhile f = PM$ \Env{ptr=p} o l -> do
-  !n <- unsafeIOToST $ findIndexOrEnd (not.f.w2c) p (fromIntegral o) l
-  return ( (), o + n, l - n )
+bsDropWhile f = do
+  Env{ptr=p, slice} <- getEnv
+  o <- U.unsafeRead slice 0
+  l <- U.unsafeRead slice 1
+  !n <- unsafeLiftIO $ findIndexOrEnd (not.f.w2c) p (fromIntegral o) l
+  U.unsafeWrite slice 0 (o+n)
+  U.unsafeWrite slice 1 (l-n)
+  return ()
 
-bsSpan f = PM$ \Env{ptr=p} o l -> do
-  !n <- unsafeIOToST $ findIndexOrEnd (not.f.w2c) p (fromIntegral o) l
-  return ( Slice o n, o + n, l - n )
+bsSpan f = do
+  Env{ptr=p, slice} <- getEnv
+  o <- U.unsafeRead slice 0
+  l <- U.unsafeRead slice 1
+  !n <- unsafeLiftIO $ findIndexOrEnd (not.f.w2c) p (fromIntegral o) l
+  U.unsafeWrite slice 0 (o+n)
+  U.unsafeWrite slice 1 (l-n)
+  return $! Slice o n
 
 findIndexOrEnd k f o l = go (f `plusPtr` o) 0 where
     go !ptr !n | n >= l    = return l
@@ -169,7 +190,7 @@ throwLoc e = loc >>= throw . e
 
 type Builder s a = ParseMonad s (Maybe a)
 
-getEnv = PM $ \env o l -> return (env,o,l)
+getEnv = PM $ \env -> return env
 
 -- | Exhausts the builder and returns the recorded slice
 recordAttributes :: Config => Builder s Attribute -> ParseMonad s Slice
@@ -234,40 +255,43 @@ getNodeStackCount = do
 {-# INLINE getNodeStackCount #-}
 
 instance Functor (ParseMonad s) where
-  fmap f (PM m) = PM $ \e o l -> do { ( a, o', l' ) <- m e o l ; return ( f a, o', l' ) }
+  fmap f (PM m) = PM $ \e -> fmap f (m e)
 instance Applicative (ParseMonad s) where
-  pure x = PM $ \_ o l -> return ( x, o, l )
-  PM pmf <*> PM pmx = PM $ \e o l -> do
-    ( f, o',  l'  ) <- pmf e o l
-    ( x, o'', l'' ) <- pmx e o' l'
-    return ( f x, o'', l'' )
+  pure x = PM $ \_ -> return x
+  PM pmf <*> PM pmx = PM $ \e -> pmf e <*> pmx e
 
 instance Monad (ParseMonad s) where
   return = pure
   {-# INLINE (>>=) #-}
-  PM m >>= k = PM $ \e o l -> do
-    (!a, !o', !l') <- m e o l
-    let !next = k a in unPM next e o' l'
+  PM m >>= k = PM $ \e -> m e >>= \x -> unPM (k x) e
 
 instance MonadState ParseState (ParseMonad s) where
   {-# INLINE state #-} -- version in transformers lacks inline pragma
-  state f = PM $ \_ o l ->
+  state f = PM $ \Env{slice} -> do
+    o <- U.unsafeRead slice 0
+    l <- U.unsafeRead slice 1
     let !(!a, Slice o' l') = f (Slice o l)
-    in return ( a, o', l' )
+    U.unsafeWrite slice 0 o'
+    U.unsafeWrite slice 1 l'
+    return a
 
   {-# INLINE get #-}
-  get = PM $ \ _ o l -> return ( Slice o l, o, l )
+  get = PM $ \Env{slice} -> do
+    o <- U.unsafeRead slice 0
+    l <- U.unsafeRead slice 1
+    return $! Slice o l
+
   {-# INLINE put #-}
-  put (Slice o' l') = PM $ \_ _ _ -> return ( (), o', l' )
+  put (Slice o' l') = PM $ \Env{slice} -> do
+    U.unsafeWrite slice 0 o'
+    U.unsafeWrite slice 1 l'
+    return ()
 
 instance MonadReader (ForeignPtr Word8) (ParseMonad s) where
   {-# INLINE ask #-}
-  ask = PM $ \Env{source=fptr} o l -> return ( fptr, o, l )
+  ask = PM $ \Env{source=fptr} -> return fptr
 
 instance PrimMonad (ParseMonad s) where
   type PrimState(ParseMonad s) = s
-  primitive m = PM $ \env o l -> primitive m <$$> (, o, l)
-
-(<$$>) :: Functor f => f a -> (a->b) -> f b
-(<$$>) = flip fmap
+  primitive m = PM $ \env -> primitive m
 
