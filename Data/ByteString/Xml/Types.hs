@@ -1,4 +1,4 @@
-{-# LANGUAGE TemplateHaskell, BangPatterns, DisambiguateRecordFields, DuplicateRecordFields, NamedFieldPuns #-}
+{-# LANGUAGE TemplateHaskell, BangPatterns, DisambiguateRecordFields, NamedFieldPuns #-}
 module Data.ByteString.Xml.Types where
 
 import Control.Lens
