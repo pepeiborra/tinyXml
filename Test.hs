@@ -21,13 +21,13 @@ examples =
     ,(False, "<test")
     ,(True, "<?xml version=\"1.1\"?>\n<greeting>Hello, world!</greeting>")
     ]
-
+{-
 childrenBy :: Node -> Str -> [Node]
 childrenBy n s = n ^.. plate . filtered(\n' -> n' ^? details . _Element . name == Just s)
 
 attributeBy :: Node -> Str -> Maybe Attribute
 attributeBy n s = n ^? details._Element.attributes.each .filtered(\a -> nameA a == s)
-
+-}
 main = do
     forM_ examples $ \(parses,src) -> do
          case parse src of
