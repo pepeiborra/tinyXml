@@ -2,6 +2,7 @@
 {-# LANGUAGE BangPatterns #-}
 {-# LANGUAGE DisambiguateRecordFields, NamedFieldPuns #-}
 {-# LANGUAGE MultiParamTypeClasses #-}
+{-# LANGUAGE CPP #-}
 module Data.ByteString.Xml.Types where
 
 import Control.Lens
@@ -111,6 +112,10 @@ data ErrorType =
   | UnfinishedComment !SrcLoc
   | Garbage !SrcLoc
    deriving Show
+
+#if __GLASGOW_HASKELL__ < 800
+prettyCallStack = show
+#endif
 
 instance Show Error where
   show (Error etype cs) = show etype ++ prettyCallStack cs
