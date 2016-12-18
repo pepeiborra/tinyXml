@@ -76,7 +76,7 @@ test-suite test
         default-language:    Haskell2010
         build-depends: base, bytestring, bytestring-xml, lens, mtl, containers, array, vector, primitive
         default-language:    Haskell2010
-        ghc-options:         -Wno-partial-type-signatures
+        ghc-options:         -fno-warn-partial-type-signatures
 
 Benchmark bench
         type: exitcode-stdio-1.0
@@ -84,11 +84,11 @@ Benchmark bench
         build-depends:  base, bytestring, bytestring-xml, lens, mtl, containers, array, vector, primitive, hexml, criterion, xml, xml-conduit, deepseq, data-default, process
         default-language:    Haskell2010
         ghc-options: -rtsopts 
-        ghc-options:         -Wno-partial-type-signatures
+        ghc-options:         -fno-warn-partial-type-signatures
 
 Executable validate 
         main-is: Validate.hs
         build-depends:  base, bytestring, bytestring-xml, lens, mtl, containers, array, vector, primitive, hexml
         ghc-options: -rtsopts -ddump-simpl -ddump-to-file -dsuppress-all -dppr-cols=150 -dppr-case-as-let
         default-language:    Haskell2010
-        ghc-options:         -Wno-partial-type-signatures
+        ghc-options:         -fno-warn-partial-type-signatures
