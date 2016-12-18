@@ -8,8 +8,8 @@ import Foreign.C
 
 data Attribute =
   Attribute
-  { nameA :: {-# UNPACK #-}!Slice,
-    value :: {-# UNPACK #-}!Slice
+  { nameA :: !Slice,
+    value :: !Slice
   }
   deriving (Eq, Show)
 

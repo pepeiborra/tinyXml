@@ -71,7 +71,7 @@ asBS = (from indexPtr)
 runPM :: ByteString -> (forall s. ParseMonad s a) -> a
 runPM (PS fptr o l) pm = runST $ do
   attributes <- VectorBuilder.new 1000
-  nodes      <- VectorBuilder.new 50
+  nodes      <- VectorBuilder.new 500
   slice      <- U.new 2
   U.unsafeWrite slice 0 (fromIntegral o)
   U.unsafeWrite slice 1 (fromIntegral l)
@@ -219,6 +219,7 @@ recordAttributes builder = do
                 return (n+1)
       count <- go 0
       return (Slice (fromIntegral firstIx) count)
+{-# INLINE recordAttributes #-}
 
 updateNode :: Config => Int -> (Ptr Node -> IO ()) -> ParseMonad s ()
 updateNode i f = do
