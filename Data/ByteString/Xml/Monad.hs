@@ -11,7 +11,9 @@
 {-# LANGUAGE TupleSections #-}
 {-# LANGUAGE DisambiguateRecordFields #-}
 {-# LANGUAGE NamedFieldPuns #-}
+{-# LANGUAGE ImplicitParams #-}
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
+{-# LANGUAGE CPP #-}
 
 module Data.ByteString.Xml.Monad where
 import qualified Control.Exception as CE
@@ -38,7 +40,7 @@ import Data.ByteString.Xml.Types
 import Data.ByteString.Xml.Internal.Types
 
 import Config
-import GHC.Stack (HasCallStack, CallStack, callStack)
+import GHC.Stack (CallStack)
 
 type MonadParse m = (MonadReader (ForeignPtr Word8) m, MonadState ParseState m)
 
@@ -183,7 +185,11 @@ loc = do
   return (SrcLoc $ fromIntegral o)
 
 throw :: HasCallStack => ErrorType -> a
+#if __GLASGOW_HASKELL__ < 800
+throw e = CE.throw $ Error e ?callStack
+#else
 throw e = CE.throw $ Error e callStack
+#endif
 
 throwLoc :: HasCallStack => MonadParse m => (SrcLoc -> ErrorType) -> m a
 throwLoc e = loc >>= throw . e
