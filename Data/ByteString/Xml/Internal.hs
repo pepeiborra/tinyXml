@@ -18,6 +18,7 @@ import Control.Exception (try, evaluate, SomeException(..))
 import Control.Monad
 import Control.Monad.Reader.Class
 import Control.Monad.State.Class
+import Data.Maybe (isJust)
 import Data.ByteString.Unsafe as BS
 import qualified Data.ByteString.Char8 as BS
 import Data.ByteString.Internal (w2c, ByteString(..))
@@ -47,18 +48,18 @@ pop = do
   return (w2c $ BS.unsafeHead bs)
 
 {-# INLINE find #-}
-find c = do
-  bs <- useE asBS
+find c bs =
   case BS.elemIndex c bs of
     Nothing ->
-      return Nothing
+      (Nothing,bs)
     Just i -> do
       let !str = bs ^. indexPtr . _1
       let !prefix = Str.take i str
-      put $! Str.drop i str
-      return (Just prefix)
+      let !bs' = BS.drop i bs
+      (Just prefix, bs')
 
 {-# INLINE trim #-}
+trim :: MonadParse m => m ()
 trim =
   asBS %== BS.dropWhile isSpace
     where
@@ -91,7 +92,7 @@ parseAttrVal = do
   _ <- expectLoc (== '=') BadAttributeForm
   trim
   c  <- expectLoc (liftA2 (||) (== '\'') (== '\"')) BadAttributeForm
-  attrVal <- find c
+  attrVal <- stateE asBS (find c)
   case attrVal of
     Just x ->  skip 1 *> return x
     Nothing -> throwLoc BadAttributeForm
@@ -109,8 +110,8 @@ parseAttrs = go Empty where
 
 -- | Parse until </
 {-# INLINE parseNode #-}
+parseNode :: MonadParse m => m ElementData
 parseNode = do
-    SrcLoc l <- loc
     _ <- expectLoc (== '<') $ error "parseTag: expected <"
     bs0@(PS fptr _ _) <- useE asBS
     bs <- if (w2c (BS.unsafeHead bs0) == '?')
@@ -128,8 +129,8 @@ parseNode = do
         let n = w2c $ BS.unsafeIndex bs 1
         if (c == '/' || c == '?') && n == '>'
           then do
-            return(Node name l fptr attrs Empty)
             put $! Str.drop 2 $ view (indexPtr._1) bs
+            return(ElementData name attrs Empty)
           else do
             unless(c == '>') $ throwLoc (UnterminatedTag name)
             put $! Str.drop 1 $ view (indexPtr._1) bs
@@ -140,13 +141,15 @@ parseNode = do
                 let n = (name,fptr) ^. from indexPtr
                 let matchTag = n `BS.isPrefixOf` BS.unsafeDrop 2 bs
                 unless matchTag $ throwLoc (ClosingTagMismatch name)
-                _ <- find '>'
-                put $! Str.drop (Str.length name + 2) $ view (indexPtr._1) bs
-                skip 1
+                let (bracket, bs')
+                      = find '>' $ BS.unsafeDrop (Str.length name + 2) $ bs
+                put $! Str.drop 1 $ view (indexPtr._1) bs'
+                unless(isJust bracket) $ throwLoc BadTagForm
               _ -> throwLoc(UnterminatedTag name)
-            return (Node name l fptr attrs nn)
+            return (ElementData name attrs nn)
 
 commentEnd :: ByteString -> (ByteString, ByteString)
+{-# INLINE commentEnd #-}
 commentEnd   = BS.breakSubstring $ BS.pack "-->"
 
 {-# INLINE dropComments #-}
@@ -164,32 +167,37 @@ dropComments = do
           _ <- dropComments
           return True
 
-parseContents = go Empty where
-  go acc = do
-    trim
-    open <- find '<'
-    case open of
-      Just prefix -> do
-        next <- peekAt 1
-        case next of
-          -- end of tag </
-          '/' -> return (appendNonNullPrefix prefix acc)
+parseContents :: MonadParse m => m NodeList
+{-# SPECIALIZE parseContents :: ParseMonad s NodeList #-}
+parseContents = do
+  fptr <- ask
+  let appendNonNullPrefix bs
+       | Str.null bs = id
+       | otherwise  = (|> Node fptr (Text bs))
+  let go acc = do
+        trim
+        open <- stateE asBS $ find '<'
+        case open of
+          Just prefix -> do
+            next <- peekAt 1
+            case next of
+              -- end of tag </
+              '/' -> return (appendNonNullPrefix prefix acc)
+              _ -> do
+                wasComment <- dropComments
+                if wasComment
+                  then
+                    -- recurse
+                    go acc
+                  else do
+                    n <- parseNode
+                    go (appendNonNullPrefix prefix acc |> Node fptr (Element n))
+          -- no tag
           _ -> do
-            wasComment <- dropComments
-            if wasComment
-              then
-                -- recurse
-                go acc
-              else do
-                n <- parseNode
-                go (appendNonNullPrefix prefix acc |> NodeChild n)
-      -- no tag
-      _ -> do
-        rest <- use cursor
-        return (appendNonNullPrefix rest acc)
-  appendNonNullPrefix bs
-      | Str.null bs = id
-      | otherwise  = (|> NodeText bs)
+            rest <- use cursor
+            return (appendNonNullPrefix rest acc)
+  go Empty
+
 
 type ParseTable = Array Int ParseType
 
@@ -215,7 +223,7 @@ parse bs = unsafePerformIO $ do
   res <- try $ evaluate $ runPM bs parseContents
   return$ case res of
     Right it ->
-      Right $ Node rootStr 0 rootPtr Empty it
+      Right $ Node rootPtr (Element (ElementData rootStr Empty it))
     Left (SomeException e) ->
       Left (show e)
 

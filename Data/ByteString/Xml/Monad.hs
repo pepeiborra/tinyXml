@@ -46,7 +46,7 @@ runPM (PS fptr o l) pm = runST $ do
   unPM pm (Env fptr refO)
 
 {-# INLINE asBS #-}
-asBS :: Lens' (ParseState, ForeignPtr Word8) ByteString
+asBS :: Iso' (ParseState, ForeignPtr Word8) ByteString
 asBS = (from indexPtr)
 
 -- | Use the target of a lens on the current state _and_ environment
@@ -59,9 +59,18 @@ useE l = do
 
 {-# INLINE overE #-}
 overE l f = do
-  s <- get
   r <- ask
-  put (fst $ over l f (s,r))
+  let f' s = ((), fst $ over l f (s,r))
+  state f'
+
+stateE :: MonadParse m => Iso' (ParseState, ForeignPtr Word8) s -> (s -> (a,s)) -> m a
+stateE iso f = withIso iso $ \from to -> do
+  r <- ask
+  let f' s =
+        let (a, sr') = f (from(s,r))
+            (s',_r') = to sr'
+        in  (a, s')
+  state f'
 
 {-# INLINE (%==) #-}
 l %== f = overE l f
