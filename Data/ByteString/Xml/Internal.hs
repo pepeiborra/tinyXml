@@ -164,8 +164,7 @@ parseNode = do
               ('<', '/') -> do
                 !matchTag <- bsIsPrefix nameBS
                 unless matchTag $ do
-                  nameBS_original <- readStr name
-                  throwLoc (ClosingTagMismatch $ (BS.unpack nameBS_original ++ " / " ++ BS.unpack nameBS))
+                  throwLoc (ClosingTagMismatch $ BS.unpack nameBS)
                 skip $ Slice.length name'
                 !bracket <- bsElemIndex '>'
                 case bracket of
@@ -173,7 +172,7 @@ parseNode = do
                   Nothing -> throwLoc BadTagForm
               _ -> throwLoc(UnterminatedTag $ BS.unpack nameBS)
             SrcLoc outerClose <- loc
-            insertNode $ Node name (sliceFromOpenClose io innerClose) (sliceFromOpenClose oo outerClose) attrs nn
+            insertNode $ Node name' (sliceFromOpenClose io innerClose) (sliceFromOpenClose oo outerClose) attrs nn
 
 commentEnd :: ByteString -> (ByteString, ByteString)
 {-# INLINE commentEnd #-}
