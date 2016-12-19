@@ -7,8 +7,11 @@ import qualified GHC.Stack
 import qualified Debug.Trace
 
 trace :: String -> a -> a
--- trace msg = Debug.Trace.trace msg
+#ifdef TRACE
+trace msg = Debug.Trace.trace msg
+#else
 trace msg x = x
+#endif
 {-# INLINE trace #-}
 
 #if __GLASGOW_HASKELL__ < 800

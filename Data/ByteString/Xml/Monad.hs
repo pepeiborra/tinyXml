@@ -152,6 +152,7 @@ bsElemIndex c = do
   !q <- unsafeLiftIO $ do memchr p' (c2w c) (fromIntegral l)
   let !res = if q == nullPtr then Nothing else Just $! q `minusPtr` p'
   return res
+{-# INLINE bsElemIndex #-}
 
 bsDropWhile f = do
   Env{ptr=p, slice} <- getEnv
@@ -199,37 +200,6 @@ type Builder s a = ParseMonad s (Maybe a)
 
 getEnv = PM $ \env -> return env
 
--- | Exhausts the builder and returns the recorded slice
-recordAttributes :: Config => Builder s Attribute -> ParseMonad s Slice
-recordAttributes builder = do
-  first <- builder
-  case first of
-    Nothing -> return sliceEmpty
-    Just a  -> do
-      Env{attributeBuffer} <- getEnv
-      firstIx <- VectorBuilder.insert attributeBuffer a
-      -- we assume that the VectorBuilder produces sequential indexes
-      -- and that no one else is inserting concurrently
-      let go n = do
-            next <- builder
-            case next of
-              Nothing -> return n
-              Just x -> do
-                _ <- VectorBuilder.insert attributeBuffer x
-                return (n+1)
-      count <- go 0
-      return (Slice (fromIntegral firstIx) count)
-{-# INLINE recordAttributes #-}
-
-updateNode :: Config => Int -> (Ptr Node -> IO ()) -> ParseMonad s ()
-updateNode i f = do
-  Env{nodeBuffer} <- getEnv
-  vector <- VectorBuilder.unsafeToMVector nodeBuffer
-  let (fptr,_l) = M.unsafeToForeignPtr0 vector
-  unsafeLiftIO $ withForeignPtr fptr $ \ptr -> f (ptr `advancePtr` i)
-  return ()
-{-# INLINE updateNode #-}
-
 -- | Push a node into the temporary stack
 pushNode :: Config => Node -> ParseMonad s ()
 pushNode node = do
@@ -237,11 +207,11 @@ pushNode node = do
   VectorBuilder.push nodeBuffer node
 {-# INLINE pushNode #-}
 
--- | Pop the top node from the temporary stack into permanent storage
-popNode :: Config => (Node -> Node) -> ParseMonad s Int
-popNode f = do
+-- | Pop the top node from the temporary stack
+popNode :: Config => ParseMonad s Node
+popNode = do
   Env{nodeBuffer} <- getEnv
-  VectorBuilder.pop f nodeBuffer
+  VectorBuilder.pop nodeBuffer
 {-# INLINE popNode #-}
 
 -- | Insert a node into permanent storage
@@ -251,11 +221,20 @@ insertNode node = do
   VectorBuilder.insert nodeBuffer node
 {-# INLINE insertNode #-}
 
-getNodeBufferCount, getNodeStackCount :: Config => ParseMonad s Int
+insertAttribute att = do
+  Env{attributeBuffer} <- getEnv
+  VectorBuilder.insert attributeBuffer att
+{-# INLINE insertAttribute #-}
+
+getNodeBufferCount, getAttributeBufferCount, getNodeStackCount :: Config => ParseMonad s Int
 getNodeBufferCount = do
   Env{nodeBuffer} <- getEnv
   VectorBuilder.getCount nodeBuffer
 {-# INLINE getNodeBufferCount #-}
+
+getAttributeBufferCount = do
+  Env{attributeBuffer} <- getEnv
+  VectorBuilder.getCount attributeBuffer
 
 getNodeStackCount = do
   Env{nodeBuffer} <- getEnv

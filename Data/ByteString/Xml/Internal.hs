@@ -14,23 +14,21 @@
 module Data.ByteString.Xml.Internal(parse) where
 
 import Control.Applicative
-import Control.Exception (try, evaluate, SomeException(..))
+import Control.Exception (try, evaluate, assert)
 import Control.Monad
-import Control.Monad.Reader.Class
 import Control.Monad.State.Class
-import Data.Maybe (isJust)
 import Data.ByteString.Unsafe as BS
 import qualified Data.ByteString.Char8 as BS
 import Data.ByteString.Internal (w2c, ByteString(..))
 import Data.Char hiding (Space)
 import Data.Array.Unboxed
 import Data.Array.Base as A
-import Data.Sequence (Seq)
 import qualified Data.VectorBuilder.Storable as VectorBuilder
 import Control.Lens hiding ((%=),(.=), use) -- redefined locally due to bad inlining
 import System.IO.Unsafe
 
 import Data.ByteString.Xml.Monad
+import Data.ByteString.Xml.Internal.Checks
 import Data.ByteString.Xml.Internal.Types
 import Data.ByteString.Xml.Types as Slice
 import Config
@@ -63,7 +61,7 @@ find !c  = do
       return Nothing
     Just !i -> do
       !prefix <- Slice.take i <$> get
-      cursor %= Slice.drop i
+      skip i
       return $ Just prefix
 
 {-# INLINE trim #-}
@@ -84,13 +82,13 @@ expectLoc pred e = do
 parseName :: Config => ParseMonad s Slice
 parseName = {-# SCC "parseTrue" #-} do
   !first <- peek
-  case isTrue first of
+  case isName1 first of
     False -> return sliceEmpty
     True  -> do
       !name <- bsSpan isName
       return name
  where
-    isTrue c = nameTable1 `unsafeAt` ord c
+    isName1 c = nameTable1 `unsafeAt` ord c
     isName c = nameTable `unsafeAt` ord c
 
 -- | Assumes cursor is on a '='
@@ -103,19 +101,31 @@ parseAttrVal = do
   !c  <- expectLoc (liftA2 (||) (== '\'') (== '\"')) (const BadAttributeForm)
   attrVal <- find c
   case attrVal of
-    Just x ->  skip 1 *> return x
+    Just !x -> skip 1 *> return x
     Nothing -> throwLoc BadAttributeForm
 
 {-# INLINE parseAttr #-}
-parseAttr :: Config => ParseMonad s (Maybe Attribute)
+parseAttr :: Config => ParseMonad s Bool
 parseAttr = do
     trim
     !n <-{-# SCC "parseName" #-} parseName
     if Slice.null n
-      then return Nothing
+      then return False
       else do
         !v <- parseAttrVal
-        return $ Just(Attribute n v)
+        _  <- insertAttribute(Attribute n v)
+        return True
+
+parseAttrs :: Config => ParseMonad s Slice
+parseAttrs = do
+  !initial <- getAttributeBufferCount
+  let goParseAttrs = do
+        !success <- parseAttr
+        when success goParseAttrs
+  goParseAttrs
+  !current <- getAttributeBufferCount
+  return (Slice (fromIntegral initial) (fromIntegral $ current-initial))
+{-# INLINE parseAttrs #-}
 
 {-# INLINE parseNode #-}
 parseNode :: Config => ParseMonad s _
@@ -125,20 +135,21 @@ parseNode = do
     !c <- peek
     when (c == '?') (skip 1)
     !name <- {-# SCC "parseName" #-} parseName
+    assert (not $ Slice.null name) $ return ()
     do
-        !attrs <- recordAttributes parseAttr
+        !attrs <- parseAttrs
         !c <- pop
         !n <- peek
         if (c == '/' || c == '?') && n == '>'
           then do
             skip 1
             SrcLoc outerClose <- loc
-            let outer = sliceFromOpenClose outerOpen outerClose
-            let inner = sliceEmpty
+            let !outer = sliceFromOpenClose outerOpen outerClose
+            let !inner = sliceEmpty
             insertNode(Node name inner outer attrs sliceEmpty)
           else do
-            !nameBS <- readStr name
-            unless(c == '>') $
+            unless(c == '>') $ do
+              nameBS <- readStr name
               throwLoc (UnterminatedTag$ BS.unpack nameBS)
             SrcLoc innerOpen <- loc
             pushNode(Node name (sliceFromOpen innerOpen) (sliceFromOpen outerOpen) attrs sliceEmpty)
@@ -146,18 +157,23 @@ parseNode = do
             SrcLoc innerClose <- loc
             !c <- pop
             !n <- pop
+            Node name' (Slice io _) (Slice oo _) attrs _ <- popNode
+            !nameBS <- readStr name'
+            checkConsistency outerOpen innerClose name name'
             case (c,n) of
               ('<', '/') -> do
                 !matchTag <- bsIsPrefix nameBS
-                unless matchTag $ throwLoc (ClosingTagMismatch $ show nameBS)
-                skip $! (Slice.length name)
-                !bracket <- find '>'
-                skip 1
-                unless(isJust bracket) $ throwLoc BadTagForm
+                unless matchTag $ do
+                  nameBS_original <- readStr name
+                  throwLoc (ClosingTagMismatch $ (BS.unpack nameBS_original ++ " / " ++ BS.unpack nameBS))
+                skip $ Slice.length name'
+                !bracket <- bsElemIndex '>'
+                case bracket of
+                  Just i  -> skip (i+1)
+                  Nothing -> throwLoc BadTagForm
               _ -> throwLoc(UnterminatedTag $ BS.unpack nameBS)
             SrcLoc outerClose <- loc
-            popNode $ \(Node name (Slice io _) (Slice oo _) attrs _) ->
-                        Node name (sliceFromOpenClose io innerClose) (sliceFromOpenClose oo outerClose) attrs nn
+            insertNode $ Node name (sliceFromOpenClose io innerClose) (sliceFromOpenClose oo outerClose) attrs nn
 
 commentEnd :: ByteString -> (ByteString, ByteString)
 {-# INLINE commentEnd #-}
@@ -183,31 +199,29 @@ dropComments = do
 parseContents :: forall s. Config => ParseMonad s Slice
 parseContents = do
   !start <- getNodeStackCount
-  SrcLoc l <- loc
-  bs <- useE asBS
-  let go :: Config => ParseMonad s ()
-      go = do
+  let goParseContents :: Config => ParseMonad s ()
+      goParseContents = do
         trim
-        !open <- find '<'
+        !open <- bsElemIndex '<'
         case open of
-          Just !prefix -> do
+          Just i -> do
+            skip i
             !next <- peekAt 1
             case next of
               -- end of tag </
               '/' -> return ()
               _ -> do
-                bs `seq` l `seq` next `seq` prefix `seq` start `seq` return ()
                 !wasComment <- {-# SCC "dropComments" #-} dropComments
                 if wasComment
                   then
-                    go
+                    goParseContents
                   else do
-                    !n <- parseNode
-                    go
+                    _ <- parseNode
+                    goParseContents
           -- no tag
           _ ->
             return ()
-  () <- go
+  () <- goParseContents
   !current <- getNodeStackCount
   return $! sliceFromOpenClose start current
 

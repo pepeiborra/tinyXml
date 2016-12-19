@@ -1,4 +1,5 @@
 {-# LANGUAGE PartialTypeSignatures #-}
+{-# LANGUAGE CPP #-}
 module Data.VectorBuilder.Storable
   (VectorBuilder, new, insert, push, pop, getCount, getStackCount, finalize, unsafeToMVector
   ) where
@@ -33,20 +34,21 @@ copyM :: (Config, _) => _
 sliceM :: (Config, _) => _
 getCount :: (Config, _) => _
 
--- readU  a = U.read  a
--- writeU a = U.write a
--- writeM a = M.write a
--- readM  a = M.read a
--- copyM  a = M.copy a
--- sliceM a = M.slice a
-
+#ifdef ENABLE_VECTOR_CHECKS
+readU  a = U.read  a
+writeU a = U.write a
+writeM a = M.write a
+readM  a = M.read a
+copyM  a = M.copy a
+sliceM a = M.slice a
+#else
 readU  a = U.unsafeRead  a
 writeU a = U.unsafeWrite a
 writeM a = M.unsafeWrite a
 readM  a = M.unsafeRead a
 copyM  a = M.unsafeCopy a
 sliceM a = M.unsafeSlice a
-
+#endif
 
 -- | Yields the number of elements stored in the buffer
 getCount l = readU (next l) 0
@@ -56,7 +58,7 @@ getStackCount l = readU  (next l) 1
 
 -- | Ensure that there is sufficient space
 request :: (Config, Storable a, PrimMonad m) => Int -> VectorBuilder (PrimState m) a -> m ()
-request n l = trace "VectorBuilder.request" $ do
+request n l = do
   frontCount <- readU  (next l) 0
   backCount  <- readU  (next l) 1
   assert (frontCount >= 0) $ return ()
@@ -64,15 +66,16 @@ request n l = trace "VectorBuilder.request" $ do
   a <- readMutVar (store l)
   let len = M.length a
   unless (frontCount + backCount + n < len) $ do
+        trace "VectorBuilder - grow" $ return ()
         a' <- M.basicUnsafeNew (len*2)
         copyM (sliceM 0 frontCount a') (sliceM 0 frontCount a)
-        copyM (sliceM (2*len-backCount-1) backCount a') (sliceM (len-backCount-1) backCount a)
+        copyM (sliceM (2*len-backCount) backCount a') (sliceM (len-backCount) backCount a)
         writeMutVar (store l) a'
 {-# INLINE request #-}
 
 -- | Inserts an element at the next free position in the vector and returns the index
 insert :: (Config, PrimMonad m, Storable a) => VectorBuilder (PrimState m) a -> a -> m Int
-insert l v = trace "VectorBuilder.insert" $ do
+insert l v = do
   request 1 l
   nextI <- readU  (next l) 0
   writeU (next l) 0 (nextI + 1)
@@ -90,25 +93,19 @@ push l v = trace "VectorBuilder.push" $ do
   assert (stackCount >= 0) $ return ()
   a <- readMutVar (store l)
   writeM a (M.length a - stackCount - 1) v
-  return ()
 {-# INLINE push #-}
 
 -- | Pop an element from the temporary stack into the next free position
 --   Throws if the stack is empty!
-pop :: (Config, PrimMonad m, Storable a) => (a -> a) -> VectorBuilder  (PrimState m) a -> m Int
-pop f l = trace "VectorBuilder.pop" $ do
-  frontCount <- readU  (next l) 0
-  backCount  <- readU  (next l) 1
+pop :: (Config, PrimMonad m, Storable a) => VectorBuilder  (PrimState m) a -> m a
+pop l = trace "VectorBuilder.pop" $ do
+  backCount  <- readU (next l) 1 
+  writeU (next l) 1 $! backCount-1
   a <- readMutVar (store l)
   let len = M.length a
   let from = len-backCount
-  let to = frontCount
   assert(backCount>0) $ return ()
-  when (from /= to) $
-    readM a (len-backCount) >>= writeM a frontCount . f
-  writeU (next l) 0 (frontCount+1)
-  writeU (next l) 1 (backCount-1)
-  return frontCount
+  readM a from
 {-# INLINE pop #-}
 
 -- | Yield a short lived reference to the underlying foreign vector.
