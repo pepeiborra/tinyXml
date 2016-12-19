@@ -191,7 +191,6 @@ dropComments = do
           throwLoc UnfinishedComment
         (_, rest) -> do
           put $! Slice.drop 3 $ view (indexPtr._1) rest
-          _ <- dropComments
           return True
 
 -- | Returns a slice of nodes
