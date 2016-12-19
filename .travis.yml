@@ -65,7 +65,7 @@ install:
 script:
  - if [ -f configure.ac ]; then autoreconf -i; fi
  - cabal clean
- - cabal configure --enable-tests --enable-benchmarks 
+ - cabal configure --enable-tests --enable-benchmarks -O2
  - cabal build   # this builds all libraries and executables (including tests/benchmarks)
  - cabal test
  - cabal bench
