@@ -64,6 +64,7 @@ install:
 # any command which exits with a non-zero exit code causes the build to fail.
 script:
  - if [ -f configure.ac ]; then autoreconf -i; fi
+ - cabal clean
  - cabal configure --enable-tests --enable-benchmarks 
  - cabal build   # this builds all libraries and executables (including tests/benchmarks)
  - cabal test
