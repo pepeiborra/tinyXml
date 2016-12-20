@@ -50,16 +50,16 @@ cursor = simple
 
 data Env s =
   Env { source          :: ForeignPtr Word8
-      , ptr             :: {-# UNPACK #-} !(Ptr Word8)
-      , attributeBuffer :: !(VectorBuilder s Attribute)
-      , nodeBuffer      :: !(VectorBuilder s (Node))
-      , slice           :: {-# UNPACK #-} !(U.MVector s Int32) -- the offset and length in a 2 element vector
+      , ptr             :: (Ptr Word8)
+      , attributeBuffer :: (VectorBuilder s Attribute)
+      , nodeBuffer      :: (VectorBuilder s (Node))
+      , slice           :: {-#UNPACK #-} !(U.MVector s Int32) -- the offset and length in a 2 element vector
       }
 
 newtype ParseMonad s a = PM {unPM :: Env s -> ST s a }
 
 liftST :: ST s a -> ParseMonad s a
-liftST action = PM $ \env -> action
+liftST action = PM $ \ ~env -> action
 
 unsafeLiftIO :: IO a -> ParseMonad s a
 unsafeLiftIO action = liftST (unsafeIOToST action)
@@ -86,14 +86,14 @@ readStr str = do
 {-# INLINE useE #-}
 useE :: MonadParse m => Getting a (ParseState, ForeignPtr Word8) a -> m a
 useE l = do
+  ~r <- ask
   s <- get
-  r <- ask
   return $ view l (s,r)
 
 -- | Apply a lens over the current state _and_ environment
 {-# INLINE overE #-}
 overE l f = do
-  r <- ask
+  ~r <- ask
   let f' s = ((), fst $ over l f (s,r))
   state f'
 
@@ -101,10 +101,10 @@ overE l f = do
 stateE :: MonadParse m => Iso' (ParseState, ForeignPtr Word8) s -> (s -> (a,s)) -> m a
 {-# INLINE stateE #-}
 stateE iso f = withIso iso $ \from to -> do
-  r <- ask
+  ~r <- ask
   let f' s =
-        let (a, sr') = f (from(s,r))
-            (s',_r') = to sr'
+        let (!a, !sr') = f (from(s,r))
+            (!s',~_r') = to sr'
         in  (a, s')
   state f'
 
@@ -132,13 +132,13 @@ bsHead = bsIndex 0
 bsIndex :: Int -> ParseMonad s Word8
 bsIndex i = do
   Env{ptr=p, slice} <- getEnv
-  o <- U.unsafeRead slice 0
+  !o <- U.unsafeRead slice 0
   unsafeLiftIO( peekByteOff p (i + fromIntegral o))
 
 bsIsPrefix (PS r o' l') = do
   Env{ptr=p, slice} <- getEnv
-  o <- U.unsafeRead slice 0
   !resp <-
+  !o <- U.unsafeRead slice 0
         unsafeLiftIO $ withForeignPtr r $ \p' ->
           memcmp (p' `plusPtr` o') (p `plusPtr` fromIntegral o) (fromIntegral l')
   let !res = resp == 0
@@ -146,8 +146,8 @@ bsIsPrefix (PS r o' l') = do
 
 bsElemIndex c = do
   Env{ptr=p, slice} <- getEnv
-  o <- U.unsafeRead slice 0
-  l <- U.unsafeRead slice 1
+  !o <- U.unsafeRead slice 0
+  !l <- U.unsafeRead slice 1
   let !p' = p `plusPtr` fromIntegral o
   !q <- unsafeLiftIO $ do memchr p' (c2w c) (fromIntegral l)
   let !res = if q == nullPtr then Nothing else Just $! q `minusPtr` p'
@@ -156,17 +156,19 @@ bsElemIndex c = do
 
 bsDropWhile f = do
   Env{ptr=p, slice} <- getEnv
-  o <- U.unsafeRead slice 0
-  l <- U.unsafeRead slice 1
+  !o <- U.unsafeRead slice 0
+  !l <- U.unsafeRead slice 1
   !n <- unsafeLiftIO $ findIndexOrEnd (not.f.w2c) p (fromIntegral o) l
   U.unsafeWrite slice 0 (o+n)
   U.unsafeWrite slice 1 (l-n)
   return ()
+{-# INLINE bsDropWhile #-}
 
+{-# INLINE bsSpan #-} 
 bsSpan f = do
   Env{ptr=p, slice} <- getEnv
-  o <- U.unsafeRead slice 0
-  l <- U.unsafeRead slice 1
+  !o <- U.unsafeRead slice 0
+  !l <- U.unsafeRead slice 1
   !n <- unsafeLiftIO $ findIndexOrEnd (not.f.w2c) p (fromIntegral o) l
   U.unsafeWrite slice 0 (o+n)
   U.unsafeWrite slice 1 (l-n)
@@ -174,7 +176,7 @@ bsSpan f = do
 
 findIndexOrEnd k f o l = go (f `plusPtr` o) 0 where
     go !ptr !n | n >= l    = return l
-               | otherwise = do w <- peek ptr
+               | otherwise = do !w <- peek ptr
                                 if k w
                                   then return n
                                   else go (ptr `plusPtr` 1) (n+1)
@@ -183,7 +185,7 @@ findIndexOrEnd k f o l = go (f `plusPtr` o) 0 where
 {-# INLINE loc #-}
 loc :: MonadParse m => m SrcLoc
 loc = do
-  Slice o _ <- use cursor
+  Slice o ~_ <- use cursor
   return (SrcLoc $ fromIntegral o)
 
 throw :: HasCallStack => ErrorType -> a
@@ -198,6 +200,7 @@ throwLoc e = loc >>= throw . e
 
 type Builder s a = ParseMonad s (Maybe a)
 
+{-# INLINE getEnv #-}
 getEnv = PM $ \env -> return env
 
 -- | Push a node into the temporary stack
@@ -242,15 +245,17 @@ getNodeStackCount = do
 {-# INLINE getNodeStackCount #-}
 
 instance Functor (ParseMonad s) where
-  fmap f (PM m) = PM $ \e -> fmap f (m e)
+  fmap f (PM m) = PM $ \ ~e -> fmap f (m e)
 instance Applicative (ParseMonad s) where
-  pure x = PM $ \_ -> return x
-  PM pmf <*> PM pmx = PM $ \e -> pmf e <*> pmx e
+  {-# INLINE pure #-}
+  pure x = PM $ \ ~_ -> return x
+  PM pmf <*> PM pmx = PM $ \ ~e -> pmf e <*> pmx e
 
 instance Monad (ParseMonad s) where
+  {-# INLINE return #-}
   return = pure
   {-# INLINE (>>=) #-}
-  PM m >>= k = PM $ \e -> m e >>= \x -> unPM (k x) e
+  PM m >>= k = PM $ \ ~e -> m e >>= \ !x -> unPM (k x) e
 
 instance MonadState ParseState (ParseMonad s) where
   {-# INLINE state #-} -- version in transformers lacks inline pragma
@@ -280,5 +285,6 @@ instance MonadReader (ForeignPtr Word8) (ParseMonad s) where
 
 instance PrimMonad (ParseMonad s) where
   type PrimState(ParseMonad s) = s
-  primitive m = PM $ \env -> primitive m
+  {-# INLINE primitive #-}
+  primitive m = PM $ \ ~_ -> primitive m
 

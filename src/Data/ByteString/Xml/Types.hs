@@ -26,7 +26,7 @@ import Foreign
 import Config
 
 data Slice =
-  Slice { offset :: {-# UNPACK #-} !Int32, length :: {-# UNPACK #-} !Int32 }
+  Slice { offset, length :: Int32 }
   deriving (Eq,Show)
 
 instance Storable Slice where
@@ -63,17 +63,17 @@ indexPtr = iso fromBS toBS where
 
 newtype SrcLoc = SrcLoc Int deriving Show
 
-data Error = Error !ErrorType !CallStack
+data Error = Error ErrorType CallStack
 data ErrorType =
-    UnterminatedComment !SrcLoc
-  | UnterminatedTag !String !SrcLoc
-  | ClosingTagMismatch !String !SrcLoc
-  | JunkAtTheEnd !Slice !SrcLoc
+    UnterminatedComment SrcLoc
+  | UnterminatedTag String SrcLoc
+  | ClosingTagMismatch String SrcLoc
+  | JunkAtTheEnd Slice SrcLoc
   | UnexpectedEndOfStream
-  | BadAttributeForm !SrcLoc
-  | BadTagForm !SrcLoc
-  | UnfinishedComment !SrcLoc
-  | Garbage !SrcLoc
+  | BadAttributeForm SrcLoc
+  | BadTagForm SrcLoc
+  | UnfinishedComment SrcLoc
+  | Garbage SrcLoc
    deriving Show
 
 #if __GLASGOW_HASKELL__ < 800

@@ -10,6 +10,7 @@
 {-# LANGUAGE MultiParamTypeClasses #-}
 {-# LANGUAGE BangPatterns #-}
 {-# LANGUAGE NamedFieldPuns #-}
+{-# LANGUAGE Strict #-}
 
 module Data.ByteString.Xml.Internal(parse) where
 
@@ -84,9 +85,7 @@ parseName = {-# SCC "parseTrue" #-} do
   !first <- peek
   case isName1 first of
     False -> return sliceEmpty
-    True  -> do
-      !name <- bsSpan isName
-      return name
+    True  -> bsSpan isName
  where
     isName1 c = nameTable1 `unsafeAt` ord c
     isName c = nameTable `unsafeAt` ord c

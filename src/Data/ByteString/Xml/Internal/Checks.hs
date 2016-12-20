@@ -13,6 +13,7 @@ doStackChecks = True
 #else
 doStackChecks = False
 #endif
+{-# INLINE doStackChecks #-}
 
 checkConsistency (fromIntegral -> outerStart) (fromIntegral -> innerClose) origStr seenStr
   | doStackChecks = do
