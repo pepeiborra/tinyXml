@@ -35,6 +35,7 @@ instance Storable Slice where
     peek p = Slice <$> peekByteOff p 0 <*> peekByteOff p 4
     poke p Slice{..} = pokeByteOff p 0 offset >> pokeByteOff p 4 length
 
+{-# INLINE sliceEmpty #-}
 sliceEmpty :: Slice
 sliceEmpty = Slice 0 0
 sliceFromOpen o = Slice (fromIntegral o) 0
