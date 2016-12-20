@@ -14,13 +14,16 @@ data Attribute =
   deriving (Eq, Show)
 
 instance Storable Attribute where
-  sizeOf _ = sizeOf (undefined :: Slice) * 2
-  alignment _ = alignment (undefined :: CInt)
+  sizeOf _ = sizeOf sliceEmpty * 2
+  alignment _ = alignment (0 :: CInt)
   peek q = do
     let p = castPtr q :: Ptr Slice
     a <- peekElemOff p 0
     b <- peekElemOff p 1
     return (Attribute a b)
+     where
+       peekElemOff ptr off  = peekByteOff ptr (off * s)
+       s = sizeOf sliceEmpty
   poke q (Attribute a b)= do
     let p = castPtr q :: Ptr Slice
     pokeElemOff p 0 a
@@ -38,9 +41,13 @@ data Node =
   deriving (Show)
 
 instance Storable Node where
-  sizeOf    _ = sizeOf(undefined :: Slice) * 5
+  sizeOf    _ = sizeOf sliceEmpty * 5
   alignment _ = alignment(0::CInt)
   peek q = let p = castPtr q in  Node <$> peekElemOff p 0 <*> peekElemOff p 1 <*> peekElemOff p 2 <*> peekElemOff p 3 <*> peekElemOff p 4
+     where
+       peekElemOff ptr off  = peekByteOff ptr (off * s)
+       s = sizeOf (0 :: Int32)
+
   poke q (Node a b c d e) = let p = castPtr q in pokeElemOff p 0 a >> pokeElemOff p 1 b >> pokeElemOff p 2 c >> pokeElemOff p 3 d >> pokeElemOff p 4 e
 
 updateInner, updateOuter, updateContents :: Slice -> Ptr Node -> IO ()
