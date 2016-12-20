@@ -49,11 +49,11 @@ type ParseState = Slice
 cursor = simple
 
 data Env s =
-  Env { source :: ForeignPtr Word8
-      , ptr :: Ptr Word8
-      , attributeBuffer :: VectorBuilder s Attribute
-      , nodeBuffer :: VectorBuilder s (Node)
-      , slice :: U.MVector s Int32 -- the offset and length in a 2 element vector
+  Env { source          :: ForeignPtr Word8
+      , ptr             :: {-# UNPACK #-} !(Ptr Word8)
+      , attributeBuffer :: !(VectorBuilder s Attribute)
+      , nodeBuffer      :: !(VectorBuilder s (Node))
+      , slice           :: {-# UNPACK #-} !(U.MVector s Int32) -- the offset and length in a 2 element vector
       }
 
 newtype ParseMonad s a = PM {unPM :: Env s -> ST s a }
