@@ -1,4 +1,5 @@
 {-# LANGUAGE OverloadedStrings #-}
+{-# LANGUAGE Rank2Types #-}
 {-# LANGUAGE StandaloneDeriving, DeriveGeneric #-}
 import Data.ByteString.Xml
 import Control.DeepSeq
@@ -23,8 +24,6 @@ import Criterion.Main
 
 import GHC.Generics (Generic)
 
-process :: (Show a, Show b) => Either a b -> String
-process = either (error.show) (const "Success")
 
 main = do
   paths0 <- getArgs
@@ -33,17 +32,22 @@ main = do
     [] -> do
       callCommand "tar xf benchmark.tar.bz"
       return ["benchmark.xml"]
-  let suite =
+  let makeBenchmark :: String -> (forall a. NFData a => (a->c) -> a -> Benchmarkable) -> (forall a b .(Show a, Show b) => Either a b -> c) -> Benchmark
+      makeBenchmark name force process =
+       bgroup name $
         [ env ((,) <$> BS.readFile p <*> readFile p) $ \ ~(bs,s) -> bgroup p
             [
-              bench "bytestring-xml" $ whnf (process . parse) bs
-            , bench "hexml" $ whnf (process . Hexml.parse) bs
+              bench "bytestring-xml" $ force (process . parse) bs
+            , bench "hexml" $ force (process . Hexml.parse) bs
 --            , bench "xml" $ whnf (length . parseXML) s
          --   , bench "xml-conduit" $ whnfIO $ XML.readFile def p
             ]
         | p <- paths]
 
-  defaultMain suite
+  let validate   = makeBenchmark "validate"    whnf $ either (error.show) (const "Success")
+  let fullyForce = makeBenchmark "fully force" nf   $ either (error.show) show
+
+  defaultMain [validate, fullyForce]
 
 deriving instance Generic Content
 deriving instance Generic Element
