@@ -21,9 +21,9 @@ data VectorBuilder s a =
     {
       -- We use an unboxed vector instead of a MutVar, which would have to be boxed
       --  (writing to MutVar is slow because of GC book keeping)
-      next  :: U.MVector s Int  -- ^ The next free index in the mutable store
+      next  :: {-# UNPACK #-} !(U.MVector s Int)  -- ^ The next free index in the mutable store
       -- The MVector is in a MutVar because grow is not in-place
-    , store :: MutVar s (S.MVector s a)    -- ^ The mutable store
+    , store :: {-# UNPACK #-} !(MutVar s (S.MVector s a))    -- ^ The mutable store
     }
 
 readU  :: (Config, _) => _

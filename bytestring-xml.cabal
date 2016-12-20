@@ -49,6 +49,7 @@ cabal-version:       >=1.22
 tested-with:         GHC == 7.10.3, GHC == 8.0.1
 
 library
+  hs-source-dirs:      src
   -- Modules exported by the library.
   exposed-modules:     Data.ByteString.Xml,
                        Data.ByteString.Xml.Types,
@@ -58,6 +59,9 @@ library
                        Data.ByteString.Xml.Monad,
                        Data.VectorBuilder.Storable
   other-modules:       Config
+
+  if impl(ghc < 8)
+            default-extensions: FlexibleContexts
 
   -- LANGUAGE extensions used by modules in this package.
   other-extensions:    OverloadedStrings, BangPatterns, DisambiguateRecordFields, FlexibleContexts, TemplateHaskell, ConstraintKinds, NoMonomorphismRestriction, LambdaCase, OverloadedLists, PartialTypeSignatures
@@ -71,10 +75,12 @@ library
   -- Base language which the package is written in.
   default-language:    Haskell2010
   ghc-options:         -fno-warn-partial-type-signatures
+  ghc-options:         -ddump-simpl -ddump-to-file -dsuppress-idinfo -dsuppress-module-prefixes -dsuppress-type-applications -dsuppress-coercions -dppr-cols=150 -dppr-case-as-let
 
 test-suite test
         type: exitcode-stdio-1.0
         main-is: Test.hs
+        hs-source-dirs:      .,src
         default-language:    Haskell2010
         build-depends: base, bytestring, bytestring-xml, lens, mtl, containers, array, vector, primitive
         default-language:    Haskell2010
@@ -89,10 +95,6 @@ Benchmark bench
         build-depends:  base, bytestring, bytestring-xml, lens, mtl, containers, array, vector, primitive, hexml, criterion, xml, xml-conduit, deepseq, data-default, process
         default-language:    Haskell2010
         ghc-options:         -rtsopts  
-        ghc-options:         -fno-warn-partial-type-signatures
-        ghc-options:          -ddump-simpl -ddump-to-file -dsuppress-idinfo -dsuppress-module-prefixes -dsuppress-type-applications -dsuppress-coercions -dppr-cols=150 -dppr-case-as-let
-        if impl(ghc < 8)
-            default-extensions: FlexibleContexts
         if impl(ghc > 8)
            ghc-options: -dsuppress-unfoldings
           
@@ -100,8 +102,5 @@ Executable validate
         main-is: Validate.hs
         build-depends:  base, bytestring, bytestring-xml, lens, mtl, containers, array, vector, primitive, hexml
         ghc-options: -rtsopts
-        cpp-options:         -DSTACK_CONSISTENCY_CHECKS -DENABLE_VECTOR_CHECKS -DDEBUG
         default-language:    Haskell2010
         ghc-options:         -fno-warn-partial-type-signatures -O0
-        if impl(ghc < 8)
-            default-extensions: FlexibleContexts
