@@ -81,7 +81,7 @@ library
   default-extensions:  StrictData
   ghc-options:         -ffun-to-thunk -flate-dmd-anal  -fregs-iterative -fsimpl-tick-factor=1000 -fspec-constr -fspec-constr-threshold=20000 -fspec-constr-count=10 -fstatic-argument-transformation -funfolding-use-threshold=600
   ghc-options:         -fno-warn-partial-type-signatures
-  ghc-options:         -dcore-lint -ddump-simpl -ddump-to-file -dsuppress-idinfo -dsuppress-module-prefixes -dsuppress-type-applications -dsuppress-coercions -dppr-cols=150 -dppr-case-as-let
+  ghc-options:         -ddump-simpl -ddump-to-file -dsuppress-idinfo -dsuppress-module-prefixes -dsuppress-type-applications -dsuppress-coercions -dppr-cols=150 -dppr-case-as-let
   if flag(Debug)
      cpp-options:         -DDEBUG
 
