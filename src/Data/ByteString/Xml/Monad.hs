@@ -41,6 +41,7 @@ import Data.ByteString.Xml.Internal.Types
 
 import Config
 import GHC.Stack (CallStack)
+import GHC.Types (SPEC(..))
 import qualified GHC.Stack
 
 type MonadParse m = (MonadReader (ForeignPtr Word8) m, MonadState ParseState m)
@@ -259,13 +260,14 @@ instance Monad (ParseMonad s) where
 
 instance MonadState ParseState (ParseMonad s) where
   {-# INLINE state #-} -- version in transformers lacks inline pragma
-  state f = PM $ \Env{slice} -> do
-    o <- U.unsafeRead slice 0
-    l <- U.unsafeRead slice 1
-    let !(!a, Slice o' l') = f (Slice o l)
-    U.unsafeWrite slice 0 o'
-    U.unsafeWrite slice 1 l'
-    return a
+  state f = state' SPEC f where
+    state' !sPEC f = PM $ \Env{slice} -> do
+        !o <- U.unsafeRead slice 0
+        !l <- U.unsafeRead slice 1
+        let (!a, Slice !o' !l') = f (Slice o l)
+        U.unsafeWrite slice 0 o'
+        U.unsafeWrite slice 1 l'
+        return a
 
   {-# INLINE get #-}
   get = PM $ \Env{slice} -> do
