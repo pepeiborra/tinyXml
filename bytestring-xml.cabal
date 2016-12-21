@@ -108,7 +108,7 @@ Benchmark bench
           
 Executable validate 
         main-is: Validate.hs
-        build-depends:  base, bytestring, bytestring-xml, lens, mtl, containers, array, vector, primitive, hexml
+        build-depends:  base, bytestring, bytestring-xml, lens, mtl, containers, array, vector, primitive, hexml, ghc-prim
         ghc-options: -rtsopts
         default-language:    Haskell2010
         ghc-options:         -fno-warn-partial-type-signatures -O0
