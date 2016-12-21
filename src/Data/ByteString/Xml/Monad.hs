@@ -138,8 +138,8 @@ bsIndex i = do
 
 bsIsPrefix (PS r o' l') = do
   Env{ptr=p, slice} <- getEnv
-  !resp <-
   !o <- U.unsafeRead slice 0
+  !resp <-
         unsafeLiftIO $ withForeignPtr r $ \p' ->
           memcmp (p' `plusPtr` o') (p `plusPtr` fromIntegral o) (fromIntegral l')
   let !res = resp == 0
