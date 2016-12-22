@@ -143,7 +143,7 @@ parseNode = do
             skip 1
             SrcLoc outerClose <- loc
             let !outer = sliceFromOpenClose outerOpen outerClose
-            let !inner = sliceEmpty
+            let inner = sliceEmpty
             insertNode(Node name inner outer attrs sliceEmpty)
           else do
             unless(c == '>') $ do
