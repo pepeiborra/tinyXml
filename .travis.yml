@@ -15,10 +15,10 @@ matrix:
   include:
     - env: CABALVER=1.22 GHCVER=7.10.3
       compiler: ": #GHC 7.10.3"
-      addons: {apt: {packages: [cabal-install-1.22,ghc-7.10.3], sources: [hvr-ghc]}}
+      addons: {apt: {packages: [cabal-install-1.22,ghc-7.10.3,llvm-3.7,clang-3.7], sources: [hvr-ghc, llvm-toolchain-precise-3.7]]}}
     - env: CABALVER=1.24 GHCVER=8.0.1
       compiler: ": #GHC 8.0.1"
-      addons: {apt: {packages: [cabal-install-1.24,ghc-8.0.1], sources: [hvr-ghc]}}
+      addons: {apt: {packages: [cabal-install-1.24,ghc-8.0.1,llvm-3.7,clang-3.7], sources: [hvr-ghc, llvm-toolchain-precise-3.7]}}
 
 before_install:
  - unset CC
@@ -65,6 +65,8 @@ install:
 script:
  - if [ -f configure.ac ]; then autoreconf -i; fi
  - cabal clean
+ - cabal configure --enable-tests --enable-benchmarks -O2 --ghc-option=-fllvm --ghc-option=-static --disable-shared
+ - cabal bench
  - cabal configure --enable-tests --enable-benchmarks -O2
  - cabal build   # this builds all libraries and executables (including tests/benchmarks)
  - cabal test
