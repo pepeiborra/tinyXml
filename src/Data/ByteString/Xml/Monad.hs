@@ -51,9 +51,9 @@ cursor = simple
 
 data Env s =
   Env { source          :: ForeignPtr Word8
-      , ptr             :: (Ptr Word8)
-      , attributeBuffer :: (VectorBuilder s Attribute)
-      , nodeBuffer      :: (VectorBuilder s (Node))
+      , ptr             :: !(Ptr Word8)
+      , attributeBuffer :: !(VectorBuilder s Attribute)
+      , nodeBuffer      :: !(VectorBuilder s (Node))
       , slice           :: {-#UNPACK #-} !(U.MVector s Int32) -- the offset and length in a 2 element vector
       }
 

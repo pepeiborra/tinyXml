@@ -26,7 +26,7 @@ import Foreign
 import Config
 
 data Slice =
-  Slice { offset, length :: Int32 }
+  Slice { offset, length :: !Int32 }
   deriving (Eq,Show)
 
 instance Storable Slice where
