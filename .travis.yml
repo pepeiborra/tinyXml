@@ -1,5 +1,5 @@
 # This file has been generated -- see https://github.com/hvr/multi-ghc-travis
-dist: trusty
+language: c
 sudo: false
 
 cache:
@@ -15,37 +15,10 @@ matrix:
   include:
     - env: CABALVER=1.22 GHCVER=7.10.3
       compiler: ": #GHC 7.10.3"
-      addons:
-        apt:
-          packages:
-            - cabal-install-1.22
-            - ghc-7.10.3
-          sources:
-            - hvr-ghc
+      addons: {apt: {packages: [cabal-install-1.22,ghc-7.10.3], sources: [hvr-ghc]}}
     - env: CABALVER=1.24 GHCVER=8.0.1
       compiler: ": #GHC 8.0.1"
-      addons: {apt: {packages: [cabal-install-1.24,ghc-8.0.1,llvm-3.7,clang-3.7], sources: [hvr-ghc,llvm-toolchain-trusty-3.7]}}
-      addons:
-        apt:
-          packages:
-            - cabal-install-1.24
-            - ghc-8.0.1
-          sources:
-            - hvr-ghc
-    - env: CABALVER=1.24 GHCVER=8.0.1
-      compiler: ": #GHC 8.0.1 llvm"
-      addons: {apt: {packages: [cabal-install-1.24,ghc-8.0.1,llvm-3.7,clang-3.7], sources: [hvr-ghc,llvm-toolchain-trusty-3.7]}}
-      addons:
-        apt:
-          packages:
-            - cabal-install-1.24
-            - ghc-8.0.1
-            - llvm-3.7
-            - clang-3.7
-          sources:
-            - hvr-ghc
-            - sourceline: 'deb http://llvm.org/apt/trusty/ llvm-toolchain-trusty-3.7 main'
-              key_url: 'http://llvm.org/apt/llvm-snapshot.gpg.key'
+      addons: {apt: {packages: [cabal-install-1.24,ghc-8.0.1], sources: [hvr-ghc]}}
 
 before_install:
  - unset CC
@@ -92,8 +65,6 @@ install:
 script:
  - if [ -f configure.ac ]; then autoreconf -i; fi
  - cabal clean
- - cabal configure --enable-tests --enable-benchmarks -O2 --ghc-option=-fllvm --ghc-option=-static --disable-shared
- - cabal bench
  - cabal configure --enable-tests --enable-benchmarks -O2
  - cabal build   # this builds all libraries and executables (including tests/benchmarks)
  - cabal test
