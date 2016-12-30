@@ -4,13 +4,14 @@
 {-# LANGUAGE NamedFieldPuns #-}
 
 module Data.ByteString.Xml
-  ( Node(..)
+  ( Node(..), name, inner, outer, contents, location
   , Attribute(..)
   , Slice(Slice)
   , Error(..)
   , ErrorType(..)
   , parse
-  , children
+  , children, childrenBy
+  , attributes, attributeBy
   ) where
 
 import Control.Arrow ((&&&))
@@ -19,10 +20,13 @@ import Data.ByteString.Xml.Types as Slice
 import qualified Data.ByteString.Xml.Internal as Internal
 import Data.ByteString.Internal (ByteString(..))
 import qualified Data.ByteString.Char8 as BS
+import qualified Data.Foldable as F
+import Data.Maybe (listToMaybe)
 import Data.Vector.Storable (Vector, (!))
 import qualified Data.Vector.Storable as V
 import Foreign (Storable)
 import Config
+import Text.Printf
 
 data Node =
   Node{ attributesV :: !(Vector Internal.Attribute)
@@ -33,9 +37,24 @@ data Node =
 
 instance Show Node where
   show n =
-    show (name n, attributes n, contents n)
+    unlines $
+         "Nodes buffer: "
+       : [ "  " ++ show n | n <- V.toList $ nodesV n]
+       ++ showNodeContents (Right n)
+     where
+       showNodeContents :: Either ByteString Node -> [String]
+       showNodeContents (Right n) =
+          [ "Node contents:"
+          , "  name: " ++ show (name n)
+          , "  slices: " ++ show (slices n)
+          , "  attributes: " ++ (show $ attributes n)
+          , "  contents: "
+          ] ++
+          [ "    " ++ l | n' <- contents n, l <- showNodeContents n']
+       showNodeContents (Left txt) =
+          [ "Text content: " ++ BS.unpack txt ]
 
-data Attribute = Attribute { attributeName, attributeValue :: !ByteString } deriving Show
+data Attribute = Attribute { attributeName, attributeValue :: !ByteString } deriving (Eq, Show)
 
 parse :: Config => ByteString -> Either Error Node
 parse bs =
@@ -79,6 +98,14 @@ children :: Node -> [Node]
 children Node{slices = Internal.Node{nodeContents}, ..} =
   [ Node{..} | slices <- vectorSlice nodeContents nodesV ]
 
+-- | Get the direct children of this node which have a specific name.
+childrenBy :: Node -> BS.ByteString -> [Node]
+childrenBy node str =
+  filter (\n -> name n == str) (children node)
+
+-- | Get the first attribute of this node which has a specific name, if there is one.
+attributeBy :: Node -> BS.ByteString -> Maybe Attribute
+attributeBy node str = listToMaybe [ a | a@(Attribute name _) <- attributes node, name == str ]
 
 location :: Node -> (Int, Int)
 location Node{source, slices=Internal.Node{outer}} =
