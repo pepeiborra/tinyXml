@@ -1,17 +1,17 @@
 packages:
   bytestring-xml.cabal
   /Users/pepe/scratch/hexml/
-  /Users/pepe/scratch/bytestring-0.10.8.1/
 
-executable-profiling: False
 profiling: False
+executable-profiling: False
 
 package bytestring-xml
   profiling-detail: toplevel-functions
-  tests: True
+  tests: False
   benchmarks: False
   optimization: 2
-  ghc-options: 
+-- cpp-options: -DSTACKTRACES
+  ghc-options: -fllvm -pgmlo=opt-3.7 -pgmlc=llc-3.7
 
 package bytestring
   profiling-detail: exported-functions

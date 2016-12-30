@@ -1,4 +1,5 @@
-{-# LANGUAGE TemplateHaskell #-}
+{-# LANGUAGE MagicHash #-}
+{-# LANGUAGE PatternSynonyms #-}
 {-# LANGUAGE BangPatterns #-}
 {-# LANGUAGE DisambiguateRecordFields, NamedFieldPuns #-}
 {-# LANGUAGE ScopedTypeVariables #-}
@@ -11,7 +12,6 @@
 
 module Data.ByteString.Xml.Types where
 
-import Control.Lens
 import Control.Exception
 import Data.ByteString.Char8 (ByteString)
 import Data.ByteString.Internal (ByteString(..))
@@ -22,18 +22,20 @@ import GHC.Stack hiding (SrcLoc)
 import Foreign.ForeignPtr       (ForeignPtr, withForeignPtr)
 import Foreign.C.Types
 import Foreign
+import Prelude hiding (length)
 
 import Config
 
 data Slice =
   Slice { offset, length :: !Int32 }
   deriving (Eq,Show)
+sInt = sizeOf(0::Int32)
 
 instance Storable Slice where
-    sizeOf _ = 8
+    sizeOf _ = sInt * 2
     alignment _ = alignment (0 :: Int64)
-    peek p = Slice <$> peekByteOff p 0 <*> peekByteOff p 4
-    poke p Slice{..} = pokeByteOff p 0 offset >> pokeByteOff p 4 length
+    peek p = Slice <$> peekByteOff p 0 <*> peekByteOff p sInt
+    poke p Slice{..} = pokeByteOff p 0 offset >> pokeByteOff p sInt length
 
 {-# INLINE sliceEmpty #-}
 sliceEmpty :: Slice
@@ -43,9 +45,9 @@ sliceFromOpenClose (fromIntegral->open) (fromIntegral->close) = Slice open (clos
 {-# INLINE null #-}
 null (Slice _ l) = l == 0
 {-# INLINE take #-}
-take i (Slice o _l) = Slice o (fromIntegral i) -- unsafe
+take !i (Slice o _l) = Slice o (fromIntegral i) -- unsafe
 {-# INLINE drop #-}
-drop i' (Slice o l) = let i = fromIntegral i' in Slice (o+i) (l-i) -- unsafe
+drop !i' (Slice o l) = let !i = fromIntegral i' in Slice (o+i) (l-i) -- unsafe
 
 sliceStart s = offset s
 sliceEnd (Slice o l) = o + l
@@ -53,9 +55,9 @@ sliceEnd (Slice o l) = o + l
 toList :: Slice -> [Int]
 toList (Slice o l) = genericTake l [ fromIntegral o ..]
 
-{-# INLINE indexPtr #-}
-indexPtr :: Iso' ByteString (Slice, ForeignPtr Word8)
-indexPtr = iso fromBS toBS where
+{-# INLINE fromIndexPtr #-}
+fromIndexPtr :: Slice -> ForeignPtr Word8 -> ByteString
+fromIndexPtr = curry toBS where
   fromBS (PS fptr o l) = (Slice (fromIntegral o) (fromIntegral l), fptr)
   toBS (Slice o l, fptr) = PS fptr (fromIntegral o) (fromIntegral l)
 
@@ -74,6 +76,7 @@ data ErrorType =
   | BadTagForm SrcLoc
   | UnfinishedComment SrcLoc
   | Garbage SrcLoc
+  | InvalidNullName SrcLoc
    deriving Show
 
 #if __GLASGOW_HASKELL__ < 800

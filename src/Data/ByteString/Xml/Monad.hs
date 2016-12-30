@@ -1,7 +1,8 @@
 {-# OPTIONS_GHC -fobject-code #-}
-{-# LANGUAGE FlexibleContexts, FlexibleInstances #-}
-{-# LANGUAGE BangPatterns #-}
+{-# LANGUAGE FlexibleContexts, FlexibleInstances, UndecidableInstances #-}
+{-# LANGUAGE ViewPatterns, BangPatterns #-}
 {-# LANGUAGE TemplateHaskell #-}
+{-# LANGUAGE DeriveFunctor #-}
 {-# LANGUAGE MultiParamTypeClasses #-}
 {-# LANGUAGE UnboxedTuples #-}
 {-# LANGUAGE ConstraintKinds #-}
@@ -19,165 +20,133 @@ module Data.ByteString.Xml.Monad where
 import qualified Control.Exception as CE
 import Control.Monad
 import Control.Monad.Primitive
-import Control.Monad.ST
-import Control.Monad.ST.Unsafe
+import Control.Monad.STS
 import Control.Monad.Reader.Class
 import Control.Monad.State.Class
 import Data.ByteString.Internal (ByteString(..), c2w, w2c, memchr, memcmp)
+import qualified Data.ByteString.Char8 as BS
 import Data.Int
-import Data.List
-import qualified Data.Vector.Unboxed.Mutable as U
-import qualified Data.Vector.Storable.Mutable as M
 import Data.Word
-import Control.Lens hiding (use)
 import Foreign.ForeignPtr
+import Foreign.ForeignPtr.Unsafe
 import Foreign.Storable
 import Foreign.Ptr
-import Foreign.Marshal.Array
+import GHC.Exts
+import GHC.Int
+import GHC.Ptr
+import Prelude hiding (Monad(..))
 
-import Data.VectorBuilder.Storable as VectorBuilder
+import Data.VectorBuilder.Storable (VectorBuilder)
+import qualified Data.VectorBuilder.Storable as VectorBuilder
+import qualified Data.ByteString.Xml.Types as Slice
 import Data.ByteString.Xml.Types
 import Data.ByteString.Xml.Internal.Types
+import Data.ByteString.Xml.Internal.Checks
 
 import Config
-import GHC.Stack (CallStack)
-import GHC.Types (SPEC(..))
 import qualified GHC.Stack
+import Text.Printf
 
 type MonadParse m = (MonadReader (ForeignPtr Word8) m, MonadState ParseState m)
 
 type ParseState = Slice
 
 data Env s =
-  Env { source          :: ForeignPtr Word8
-      , ptr             :: !(Ptr Word8)
-      , attributeBuffer :: !(VectorBuilder s Attribute)
-      , nodeBuffer      :: !(VectorBuilder s (Node))
-      , cursor          :: {-#UNPACK #-} !(U.MVector s Int32) -- the offset and length in a 2 element vector
+  Env { source          :: !ByteString
+      , ptr             :: {-# UNPACK #-} !(Ptr Word8)
+      , attributeBuffer :: {-# UNPACK #-} !(VectorBuilder s Attribute)
+      , nodeBuffer      :: {-# UNPACK #-} !(VectorBuilder s Node)
       }
 
-newtype ParseMonad s a = PM {unPM :: Env s -> ST s a }
+newtype ParseMonad s a = PM {unPM :: Env s -> STS s a}
 
-liftST :: ST s a -> ParseMonad s a
-liftST action = PM $ \ ~env -> action
+liftSTS :: STS s a -> ParseMonad s a
+liftSTS action = PM $ \ _ -> action
 
 unsafeLiftIO :: IO a -> ParseMonad s a
-unsafeLiftIO action = liftST (unsafeIOToST action)
-
-{-# INLINE asBS #-}
-asBS :: Iso' (ParseState, ForeignPtr Word8) ByteString
-asBS = (from indexPtr)
+unsafeLiftIO action = liftSTS (unsafeIOToSTS action)
 
 runPM :: ByteString -> (forall s. ParseMonad s a) -> a
-runPM (PS fptr o l) pm = runST $ do
+runPM bs@(PS fptr (fromIntegral -> I32# o) (fromIntegral -> I32# l)) pm = runSTS o l $ do
   attributes <- VectorBuilder.new 1000
-  nodes      <- VectorBuilder.new 500
-  cursor      <- U.new 2
-  U.unsafeWrite cursor 0 (fromIntegral o)
-  U.unsafeWrite cursor 1 (fromIntegral l)
-  unsafeIOToST $ withForeignPtr fptr $ \ptr -> unsafeSTToIO $ unPM pm (Env fptr ptr attributes nodes cursor)
+  nodes <- VectorBuilder.new 500
+  let ptr = unsafeForeignPtrToPtr fptr
+  unPM pm (Env bs ptr attributes nodes)
 
 readStr :: Slice -> ParseMonad s ByteString
 readStr str = do
-  Env{source} <- getEnv
-  return $ (str,source) ^. from indexPtr
+  Env{source = PS fptr _ _} <- getEnv
+  return $! fromIndexPtr str fptr
 
--- | Use the target of a lens on the current state _and_ environment
-{-# INLINE useE #-}
-useE :: MonadParse m => Getting a (ParseState, ForeignPtr Word8) a -> m a
-useE l = do
-  ~r <- ask
-  s <- get
-  return $ view l (s,r)
+{-# INLINE getBS #-}
+getBS :: ParseMonad s ByteString
+getBS = get >>= readStr
 
--- | Apply a lens over the current state _and_ environment
-{-# INLINE overE #-}
-overE l f = do
-  ~r <- ask
-  let f' s = ((), fst $ over l f (s,r))
-  state f'
-
--- | Apply a state function to the state and environment, under the given iso
-stateE :: MonadParse m => Iso' (ParseState, ForeignPtr Word8) s -> (s -> (a,s)) -> m a
-{-# INLINE stateE #-}
-stateE iso f = withIso iso $ \from to -> do
-  ~r <- ask
-  let f' s =
-        let (!a, !sr') = f (from(s,r))
-            (!s',~_r') = to sr'
-        in  (a, s')
-  state f'
-
-{-# INLINE (%==) #-}
-l %== f = overE l f
-
-{-# INLINE (.==) #-}
-l .== v = overE l (const v)
-
--- The original uses State.modify, which lacks an inline pragma
-{-# INLINE (%=) #-}
-l %= f = state (\s -> ((), s & l %~ f))
-
--- The original uses State.modify, which lacks an inline pragma
-{-# INLINE (.=) #-}
-l .= f = state (\s -> ((), s & l .~ f))
-
--- The original uses State.gets, which lacks an inline pragma
-{-# INLINE use #-}
-use l = fmap (view l) get
-  
-bsHead :: ParseMonad s Word8
 bsHead = bsIndex 0
 
-bsIndex :: Int -> ParseMonad s Word8
-bsIndex i = do
-  Env{ptr=p, cursor} <- getEnv
-  !o <- U.unsafeRead cursor 0
-  unsafeLiftIO( peekByteOff p (i + fromIntegral o))
+unsafeIO :: String -> IO a -> ParseMonad s a
+unsafeIO msg action = unsafeLiftIO $ do
+#ifdef TRACE_UNSAFE
+  putStrLn $ "About to start unsafe IO: " ++ msg
+  res <- action
+  putStrLn $ "Completed unsafe IO: " ++ msg
+  return res
+#else
+  action
+#endif
 
-bsIndex2 :: Int -> Int -> ParseMonad s (Word8, Word8)
-bsIndex2 i j = do
-  Env{ptr=p, cursor} <- getEnv
-  !o <- fromIntegral <$> U.unsafeRead cursor 0
-  unsafeLiftIO $ (,) <$> peekByteOff p (i + o) <*> peekByteOff p (j + o)
+bsIndex :: Int -> (Char -> a) -> ParseMonad s a
+bsIndex i pred = do
+  checkCursor
+  Env{ptr=p} <- getEnv
+  Slice o _ <- get
+  byte <- unsafeIO "BS" $ peekByteOff p (i + fromIntegral o)
+  return (pred $ w2c byte)
+
+bsIndex2 :: Int -> Int -> (Char -> Char -> a) -> ParseMonad s a
+bsIndex2 i j pred = do
+  Env{ptr=p} <- getEnv
+  Slice o _ <- get
+  checkCursor
+  byteI <- unsafeIO "BS" $ peekByteOff p (i + fromIntegral o)
+  byteJ <- unsafeIO "BS" $ peekByteOff p (j + fromIntegral o)
+  return $ pred (w2c byteI) (w2c byteJ)
 
 bsIsPrefix (PS r o' l') = do
-  Env{ptr=p, cursor} <- getEnv
-  !o <- U.unsafeRead cursor 0
-  !resp <-
-        unsafeLiftIO $ withForeignPtr r $ \p' ->
+  Env{ptr=p} <- getEnv
+  Slice o _ <- get
+  checkCursor
+  resp <-
+        unsafeIO "memcmp" $ withForeignPtr r $ \p' ->
           memcmp (p' `plusPtr` o') (p `plusPtr` fromIntegral o) (fromIntegral l')
-  let !res = resp == 0
+  let res = resp == 0
   return res
 
 bsElemIndex c = do
-  Env{ptr=p, cursor} <- getEnv
-  !o <- U.unsafeRead cursor 0
-  !l <- U.unsafeRead cursor 1
+  Env{ptr=p} <- getEnv
+  Slice o l <- get
+  checkCursor
   let !p' = p `plusPtr` fromIntegral o
-  !q <- unsafeLiftIO $ do memchr p' (c2w c) (fromIntegral l)
+  !q <- unsafeIO "memchr" $ memchr p' (c2w c) (fromIntegral l)
   let !res = if q == nullPtr then Nothing else Just $! q `minusPtr` p'
   return res
 {-# INLINE bsElemIndex #-}
 
 bsDropWhile f = do
-  Env{ptr=p, cursor} <- getEnv
-  !o <- U.unsafeRead cursor 0
-  !l <- U.unsafeRead cursor 1
-  !n <- unsafeLiftIO $ findIndexOrEnd (not.f.w2c) p (fromIntegral o) l
-  U.unsafeWrite cursor 0 (o+n)
-  U.unsafeWrite cursor 1 (l-n)
-  return ()
+  Env{ptr=p} <- getEnv
+  Slice o l <- get
+  checkCursor
+  !n <- unsafeIO "BS" $ findIndexOrEnd (not.f.w2c) p (fromIntegral o) l
+  put $ Slice (o+n) (l-n)
 {-# INLINE bsDropWhile #-}
 
 {-# INLINE bsSpan #-} 
 bsSpan f = do
-  Env{ptr=p, cursor} <- getEnv
-  !o <- U.unsafeRead cursor 0
-  !l <- U.unsafeRead cursor 1
-  !n <- unsafeLiftIO $ findIndexOrEnd (not.f.w2c) p (fromIntegral o) l
-  U.unsafeWrite cursor 0 (o+n)
-  U.unsafeWrite cursor 1 (l-n)
+  Env{ptr=p} <- getEnv
+  Slice o l <- get
+  checkCursor
+  !n <- unsafeIO "BS" $ findIndexOrEnd (not.f.w2c) p (fromIntegral o) l
+  put $ Slice (o+n) (l-n)
   return $! Slice o n
 
 findIndexOrEnd k f o l = go (f `plusPtr` o) 0 where
@@ -186,13 +155,12 @@ findIndexOrEnd k f o l = go (f `plusPtr` o) 0 where
                                 if k w
                                   then return n
                                   else go (ptr `plusPtr` 1) (n+1)
+
 {-# INLINE findIndexOrEnd #-}
 
 {-# INLINE loc #-}
-loc :: MonadParse m => m SrcLoc
-loc = do
-  Slice o ~_ <- use simple
-  return (SrcLoc $ fromIntegral o)
+loc :: ParseMonad s SrcLoc
+loc = PM $ \env -> STS $ \ s o l -> (# s, o, l, SrcLoc $ fromIntegral (I32# o) #)
 
 throw :: HasCallStack => ErrorType -> a
 #if __GLASGOW_HASKELL__ < 800
@@ -201,30 +169,34 @@ throw e = CE.throw $ Error e ?callStack
 throw e = CE.throw $ Error e GHC.Stack.callStack
 #endif
 
-throwLoc :: HasCallStack => MonadParse m => (SrcLoc -> ErrorType) -> m a
 throwLoc e = loc >>= throw . e
 
 type Builder s a = ParseMonad s (Maybe a)
 
 {-# INLINE getEnv #-}
-getEnv = PM $ \env -> return env
+getEnv = PM return
 
 -- | Push a node into the temporary stack
-pushNode :: Config => Node -> ParseMonad s ()
+pushNode :: Config => Node -> ParseMonad s Int32
 pushNode node = do
   Env{nodeBuffer} <- getEnv
   VectorBuilder.push nodeBuffer node
 {-# INLINE pushNode #-}
 
--- | Pop the top node from the temporary stack
-popNode :: Config => ParseMonad s Node
-popNode = do
+{-# INLINE popNodes #-}
+-- | Pop the topmost n elements from the node buffer stack
+popNodes :: Config => Int32 -> ParseMonad s ()
+popNodes n = do
   Env{nodeBuffer} <- getEnv
-  VectorBuilder.pop nodeBuffer
-{-# INLINE popNode #-}
+  VectorBuilder.pop nodeBuffer n
+
+peekNode :: Config => Int32 -> ParseMonad s Node
+peekNode n = do
+  Env{nodeBuffer} <- getEnv
+  VectorBuilder.peek nodeBuffer n
 
 -- | Insert a node into permanent storage
-insertNode :: Config => Node -> ParseMonad s Int
+insertNode :: Config => Node -> ParseMonad s ()
 insertNode node = do
   Env{nodeBuffer} <- getEnv
   VectorBuilder.insert nodeBuffer node
@@ -235,7 +207,7 @@ insertAttribute att = do
   VectorBuilder.insert attributeBuffer att
 {-# INLINE insertAttribute #-}
 
-getNodeBufferCount, getAttributeBufferCount, getNodeStackCount :: Config => ParseMonad s Int
+getNodeBufferCount, getAttributeBufferCount, getNodeStackCount :: Monad(ParseMonad s) => Config => ParseMonad s Int32
 getNodeBufferCount = do
   Env{nodeBuffer} <- getEnv
   VectorBuilder.getCount nodeBuffer
@@ -250,46 +222,68 @@ getNodeStackCount = do
   VectorBuilder.getStackCount nodeBuffer
 {-# INLINE getNodeStackCount #-}
 
+updateNode i f = do
+  Env{nodeBuffer} <- getEnv
+  VectorBuilder.updateStackElt nodeBuffer i f
+
+indexNodeBufferFromEnd i = do
+  Env{nodeBuffer} <- getEnv
+  VectorBuilder.indexFromEnd nodeBuffer i
+
 instance Functor (ParseMonad s) where
-  fmap f (PM m) = PM $ \ ~e -> fmap f (m e)
+  fmap f (PM m) = PM ( fmap f . m)
+
 instance Applicative (ParseMonad s) where
-  {-# INLINE pure #-}
-  pure x = PM $ \ ~_ -> return x
-  PM pmf <*> PM pmx = PM $ \ ~e -> pmf e <*> pmx e
+  pure x = PM (\_ -> return x)
+  (<*>) = ap
 
 instance Monad (ParseMonad s) where
-  {-# INLINE return #-}
-  return = pure
   {-# INLINE (>>=) #-}
-  PM m >>= k = PM $ \ ~e -> m e >>= \ x -> unPM (k x) e
+  m >>= k = bindPM m k
+
+bindPM :: ParseMonad s a -> (a -> ParseMonad s b) -> ParseMonad s b
+bindPM (PM m) k = PM (\e -> m e >>= \a -> unPM (k a) e )
+{-# INLINE bindPM #-}
 
 instance MonadState ParseState (ParseMonad s) where
-  {-# INLINE state #-} -- version in transformers lacks inline pragma
-  state f = PM $ \Env{cursor} -> do
-        !o <- U.unsafeRead cursor 0
-        !l <- U.unsafeRead cursor 1
-        let (!a, Slice !o' !l') = f (Slice o l)
-        U.unsafeWrite cursor 0 o'
-        U.unsafeWrite cursor 1 l'
-        return a
-
-  {-# INLINE get #-}
-  get = PM $ \Env{cursor} -> do
-    o <- U.unsafeRead cursor 0
-    l <- U.unsafeRead cursor 1
-    return $ Slice o l
-
-  {-# INLINE put #-}
-  put (Slice o' l') = PM $ \Env{cursor} -> do
-    U.unsafeWrite cursor 0 o'
-    U.unsafeWrite cursor 1 l'
+  get = PM $ \_ -> STS $ \ s o l -> (# s, o, l, Slice (I32# o) (I32# l) #)
+  put (Slice (I32# o) (I32# l)) = PM $ \_ -> STS $ \ s _ _ ->
+      (# s, o, l, () #)
 
 instance MonadReader (ForeignPtr Word8) (ParseMonad s) where
   {-# INLINE ask #-}
-  ask = PM $ \Env{source=fptr} -> return fptr
+  ask = PM $ \Env{source = PS fptr _ _} -> return fptr
 
 instance PrimMonad (ParseMonad s) where
   type PrimState(ParseMonad s) = s
   {-# INLINE primitive #-}
-  primitive m = PM $ \ ~_ -> primitive m
+  primitive m = PM $ \ _ -> primitive m
 
+checkCursor
+  | doCursorChecks = do
+      Env{source = PS _ o0 l0} <- getEnv
+      Slice o l <- get
+      return $ checkBSaccess o l o0 l0
+  | otherwise = return ()
+
+checkConsistency (fromIntegral -> outerStart) (fromIntegral -> innerClose) origStr seenStr
+  | doStackChecks = do
+            nameBS_original <- readStr origStr
+            seenBS <- readStr seenStr
+            unless (seenBS == nameBS_original) $ do
+                xml <- readStr(Slice outerStart (min 100 $ innerClose + fromIntegral( Slice.length origStr) + 4 - outerStart))
+                total <- getNodeStackCount
+                let go n
+                     | n >= total = return []
+                     | otherwise = do
+                          node <- peekNode n
+                          nBS <- readStr (name node)
+                          (BS.unpack nBS :) <$> go (n+1)
+                stackNames <- go 0
+                error $ printf "Inconsistency detected in the node stack while parsing %s...\n Expected %s(%s), but obtained %s(%s) (and the stack contains %s)"
+                                (BS.unpack xml) (BS.unpack nameBS_original) (show origStr) (BS.unpack seenBS) (show seenStr)(show stackNames)
+  | otherwise =
+      return ()
+
+{-# INLINE checkConsistency #-}
+{-# INLINE checkCursor #-}

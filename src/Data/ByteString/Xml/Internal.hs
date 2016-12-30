@@ -1,4 +1,5 @@
 {-# LANGUAGE DisambiguateRecordFields #-}
+{-# LANGUAGE TypeApplications #-}
 {-# LANGUAGE ViewPatterns #-}
 {-# LANGUAGE FlexibleContexts, FlexibleInstances #-}
 {-# LANGUAGE ScopedTypeVariables #-}
@@ -12,10 +13,10 @@
 {-# LANGUAGE BangPatterns #-}
 {-# LANGUAGE NamedFieldPuns #-}
 
-module Data.ByteString.Xml.Internal(parse) where
+module Data.ByteString.Xml.Internal (parse) where
 
 import Control.Applicative
-import Control.Exception (try, evaluate, assert)
+import Control.Exception (Exception, try, evaluate, assert)
 import Control.Monad
 import Control.Monad.State.Class
 import Data.ByteString.Unsafe as BS
@@ -25,8 +26,8 @@ import Data.Char hiding (Space)
 import Data.Array.Unboxed
 import Data.Array.Base as A
 import qualified Data.VectorBuilder.Storable as VectorBuilder
-import Control.Lens hiding ((%=),(.=), use) -- redefined locally due to bad inlining
 import System.IO.Unsafe
+import Text.Printf
 
 import Data.ByteString.Xml.Monad
 import Data.ByteString.Xml.Internal.Checks
@@ -34,37 +35,36 @@ import Data.ByteString.Xml.Internal.Types
 import Data.ByteString.Xml.Types as Slice
 import Config
 
+default (Int, Double)
+
 {-# INLINE peekAt #-}
-peekAt :: Config => _ -> ParseMonad s Char
-peekAt n = fmap w2c $ bsIndex n
+peekAt :: Config => Int -> (Char -> Bool) -> ParseMonad s Bool
+peekAt n pred = bsIndex n pred
 
 {-# INLINE peek #-}
-peek :: Config => ParseMonad s Char
-peek = fmap w2c bsHead
+peek :: Config => (Char -> Bool) -> ParseMonad s Bool
+peek pred = bsHead pred
 
 {-# INLINE skip #-}
 skip :: (Integral a, Config) => a -> ParseMonad s ()
-skip n = simple %= Slice.drop n
+skip n = modify $ Slice.drop n
 
 {-# INLINE pop #-}
-pop :: Config => ParseMonad s Char
-pop = {-# SCC "pop" #-} do
-  !c <- bsHead
-  skip 1
-  return (w2c c)
+pop :: Config => (Char -> a) -> ParseMonad s a
+pop pred = bsHead pred <* skip 1
 
 {-# INLINE findAndPop #-}
-findAndPop :: Config => Char -> ParseMonad s _
-findAndPop !c  = do
+findAndPop :: Config => Char -> (SrcLoc -> ErrorType) -> (Slice -> ParseMonad s r) -> ParseMonad s r
+findAndPop !c mkE k = do
   !x <- bsElemIndex c
   case x of
     Nothing ->
-      return Nothing
+      throwLoc mkE
     Just !i -> do
-      c <- get
-      let !prefix = Slice.take i c
-      put(Slice.drop (i+1) c)
-      return $ Just prefix
+      cursor <- get
+      let !prefix = Slice.take i cursor
+      put(Slice.drop (i+1) cursor)
+      k prefix
 
 {-# INLINE trim #-}
 trim :: Config => ParseMonad s ()
@@ -74,17 +74,19 @@ trim =
       isSpace !c = spaceTable `unsafeAt` ord c
 
 {-# INLINE expectLoc #-}
-expectLoc :: Config => _ -> _ -> ParseMonad s _
+expectLoc :: Config => (Char -> Bool) -> _ -> ParseMonad s ()
 expectLoc pred e = do
-  !c <- pop
-  unless (pred c) $ throwLoc(e c)
-  return c
+  !b <- peek pred
+  unless b $ do
+    c <- pop id
+    throwLoc(e c)
+  skip 1
 
 {-# INLINE parseName #-}
 parseName :: Config => ParseMonad s Slice
 parseName = {-# SCC "parseTrue" #-} do
-  !first <- peek
-  case isName1 first of
+  !first <- peek isName1
+  case first of
     False -> return sliceEmpty
     True  -> bsSpan isName
  where
@@ -93,16 +95,14 @@ parseName = {-# SCC "parseTrue" #-} do
 
 -- | Assumes cursor is on a '='
 {-# INLINE parseAttrVal #-}
-parseAttrVal :: Config => ParseMonad s Slice
-parseAttrVal = do
+parseAttrVal :: Config => Slice -> ParseMonad s ()
+parseAttrVal n = do
   trim
-  _ <- expectLoc (== '=') (const BadAttributeForm)
+  expectLoc (== '=') (const BadAttributeForm)
   trim
-  !c  <- expectLoc (liftA2 (||) (== '\'') (== '\"')) (const BadAttributeForm)
-  attrVal <- findAndPop c
-  case attrVal of
-    Just !x -> return x
-    Nothing -> throwLoc BadAttributeForm
+  !c  <- pop id
+  unless (c == '\'' || c == '\"') (throwLoc BadAttributeForm)
+  findAndPop c BadAttributeForm (insertAttribute . (Attribute n))
 
 {-# INLINE parseAttr #-}
 parseAttr :: Config => ParseMonad s Bool
@@ -112,8 +112,7 @@ parseAttr = do
     if Slice.null n
       then return False
       else do
-        !v <- parseAttrVal
-        _  <- insertAttribute(Attribute n v)
+        parseAttrVal n
         return True
 
 parseAttrs :: Config => ParseMonad s Slice
@@ -128,51 +127,52 @@ parseAttrs = do
 {-# INLINE parseAttrs #-}
 
 {-# INLINE parseNode #-}
-parseNode :: Config => ParseMonad s _
+parseNode :: Config => ParseMonad s ()
 parseNode = do
     SrcLoc outerOpen <- loc
-    _ <- expectLoc (== '<') $ \c -> error( "parseNode: expected < got " ++ [c] )
-    !c <- peek
-    when (c == '?') (skip 1)
+    expectLoc (== '<') $ \c -> error( "parseNode: expected < got " ++ [c] )
+    !c <- peek (== '?')
+    when c (skip 1)
     !name <- {-# SCC "parseName" #-} parseName
-    assert (not $ Slice.null name) $ return ()
+    when (Slice.null name) $ throwLoc InvalidNullName
     do
         !attrs <- parseAttrs
-        !c <- pop
-        !n <- peek
-        if (c == '/' || c == '?') && n == '>'
+        (isTagEnd, isTagClose) <- bsIndex2 0 1 $ \c n -> ((c == '/' || c == '?') && n == '>', c == '>')
+        skip 1
+        if isTagEnd
           then do
             skip 1
             SrcLoc outerClose <- loc
             let !outer = sliceFromOpenClose outerOpen outerClose
             let inner = sliceEmpty
-            insertNode(Node name inner outer attrs sliceEmpty)
+            _ <- pushNode(Node name inner outer attrs sliceEmpty)
+            return ()
           else do
-            unless(c == '>') $ do
+            unless isTagClose $ do
               nameBS <- readStr name
               throwLoc (UnterminatedTag$ BS.unpack nameBS)
             SrcLoc innerOpen <- loc
-            pushNode(Node name (sliceFromOpen innerOpen) (sliceFromOpen outerOpen) attrs sliceEmpty)
+            me <- pushNode(Node name (sliceFromOpen innerOpen) (sliceFromOpen outerOpen) attrs sliceEmpty)
             !nn <- parseContents
             SrcLoc innerClose <- loc
-            (w2c -> !c, w2c -> !n) <- bsIndex2 0 1
+            isTagEnd <- bsIndex2 0 1 $ \c n -> c == '<' && n == '/'
             skip 2
-            Node name' (Slice io _) (Slice oo _) attrs _ <- popNode
-            !nameBS <- readStr name'
-            checkConsistency outerOpen innerClose name name'
-            case (c,n) of
-              ('<', '/') -> do
-                !matchTag <- bsIsPrefix nameBS
-                unless matchTag $
-                  throwLoc (ClosingTagMismatch $ BS.unpack nameBS)
-                skip $ Slice.length name'
-                !bracket <- bsElemIndex '>'
-                case bracket of
-                  Just i  -> skip (i+1)
-                  Nothing -> throwLoc BadTagForm
-              _ -> throwLoc(UnterminatedTag $ BS.unpack nameBS)
+            !nameBS <- readStr name
+            unless isTagEnd $ throwLoc (UnterminatedTag $ BS.unpack nameBS)
+            !matchTag <- bsIsPrefix nameBS
+            unless matchTag $
+              throwLoc (ClosingTagMismatch $ BS.unpack nameBS)
+            skip $! Slice.length name
+            !bracket <- bsElemIndex '>'
+            case bracket of
+              Just i  -> skip $! (i+1)
+              Nothing -> throwLoc BadTagForm
             SrcLoc outerClose <- loc
-            insertNode $ Node name' (sliceFromOpenClose io innerClose) (sliceFromOpenClose oo outerClose) attrs nn
+            updateNode me $ \n@Node{name=name', inner = Slice innerOpen' _, outer = Slice outerOpen' _, attributes=attrs'} ->
+              assert (name==name') $
+              assert (innerOpen == fromIntegral innerOpen' || error (printf "Expected:%d, Obtained:%d, me: %d, node: %s" innerOpen innerOpen' me (show n))) $
+              assert (outerOpen == fromIntegral outerOpen' || error (printf "Expected:%d, Obtained:%d" outerOpen outerOpen')) $
+              Node name' (sliceFromOpenClose innerOpen' innerClose) (sliceFromOpenClose outerOpen' outerClose) attrs' nn
 
 commentEnd :: ParseMonad s ()
 {-# INLINE commentEnd #-}
@@ -182,17 +182,18 @@ commentEnd  = do
     Nothing -> throwLoc UnfinishedComment
     Just !end -> do
       skip $! (end+1)
-      (w2c -> p, w2c -> p') <- bsIndex2 (-2) (-3)
-      unless (p == '-' && p' == '-') commentEnd
+      isEnd <- bsIndex2 (-2) (-3) $ \p p' -> p == '-' && p' == '-'
+      unless isEnd commentEnd
 
 {-# INLINE dropComments #-}
+dropComments :: ParseMonad s Bool
 dropComments = do
   !x <- bsIsPrefix "<!--"
   case x of
     False ->
       return False
     True -> do
-      !bs <- useE asBS
+      !bs <- getBS
       skip 4
       commentEnd
       return True
@@ -200,19 +201,15 @@ dropComments = do
 -- | Returns a slice of nodes
 parseContents :: forall s. Config => ParseMonad s Slice
 parseContents = do
-  !start <- getNodeStackCount
+  !before <- getNodeStackCount
   let goParseContents :: Config => ParseMonad s ()
       goParseContents = do
-        trim
         !open <- bsElemIndex '<'
         case open of
           Just i -> do
             skip i
-            !next <- peekAt 1
-            case next of
-              -- end of tag </
-              '/' -> return ()
-              _ -> do
+            !next <- peekAt 1 (== '/')
+            unless next $ do
                 !wasComment <- {-# SCC "dropComments" #-} dropComments
                 if wasComment
                   then
@@ -224,8 +221,11 @@ parseContents = do
           _ ->
             return ()
   () <- goParseContents
-  !current <- getNodeStackCount
-  return $! sliceFromOpenClose start current
+  !after <- getNodeStackCount
+  !front <- getNodeBufferCount
+  let diff = after - before
+  popNodes diff
+  return $! sliceFromOpenClose front (front+diff)
 
 type ParseTable = UArray Int Bool
 
@@ -270,8 +270,3 @@ parse bs = unsafePerformIO $ do
       in Right (attributesV, nodesV, rootNode )
     Left e ->
       Left e
-
-(|||) a b c = a || b || c
-
-(rootStr, rootPtr) = view indexPtr "\\"
-

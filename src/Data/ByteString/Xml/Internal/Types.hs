@@ -8,8 +8,8 @@ import Foreign.C
 
 data Attribute =
   Attribute
-  { nameA :: !Slice,
-    value :: !Slice
+  { nameA :: Slice,
+    value :: Slice
   }
   deriving (Eq, Show)
 
@@ -37,17 +37,13 @@ instance Storable Attribute where
 --  * contents   (Node slice)
 
 data Node =
-  Node { name, inner, outer, attributes, nodeContents :: {-# UNPACK #-}!Slice }
+  Node { name, inner, outer, attributes, nodeContents :: Slice }
   deriving (Show)
 
 instance Storable Node where
   sizeOf    _ = sizeOf sliceEmpty * 5
   alignment _ = alignment(0::CInt)
-  peek q = let p = castPtr q in  Node <$> peekElemOff p 0 <*> peekElemOff p 1 <*> peekElemOff p 2 <*> peekElemOff p 3 <*> peekElemOff p 4
-     where
-       peekElemOff ptr off  = peekByteOff ptr (off * s)
-       s = sizeOf (0 :: Int32)
-
+  peek q = let p = castPtr q in Node <$> peekElemOff p 0 <*> peekElemOff p 1 <*> peekElemOff p 2 <*> peekElemOff p 3 <*> peekElemOff p 4
   poke q (Node a b c d e) = let p = castPtr q in pokeElemOff p 0 a >> pokeElemOff p 1 b >> pokeElemOff p 2 c >> pokeElemOff p 3 d >> pokeElemOff p 4 e
 
 updateInner, updateOuter, updateContents :: Slice -> Ptr Node -> IO ()

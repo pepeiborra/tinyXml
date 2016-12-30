@@ -20,7 +20,7 @@ type HasCallStack = (?callStack :: GHC.Stack.CallStack)
 type HasCallStack = GHC.Stack.HasCallStack
 #endif
 
-#ifdef DEBUG
+#ifdef STACKTRACES
 type Config = HasCallStack
 #else
 type Config = (() :: Constraint)
