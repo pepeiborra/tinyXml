@@ -133,7 +133,8 @@ unsafeToMVector l = readMutVar (store l)
 
 -- | Pop elements out of the temporary stack and append into the main buffer
 pop :: Config => (Storable a, PrimMonad m, Storable a) => VectorBuilder (PrimState m) a -> Int32 -> m ()
-pop VectorBuilder{next, store} n = do
+pop l@VectorBuilder{next, store} n = do
+  request n l
   backCount <- readU next 1
   frontCount <- readU next 0
   assert(backCount >= n) $ return ()
