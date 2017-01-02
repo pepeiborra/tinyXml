@@ -1,5 +1,4 @@
 {-# LANGUAGE DisambiguateRecordFields #-}
-{-# LANGUAGE TypeApplications #-}
 {-# LANGUAGE ViewPatterns #-}
 {-# LANGUAGE FlexibleContexts, FlexibleInstances #-}
 {-# LANGUAGE ScopedTypeVariables #-}
