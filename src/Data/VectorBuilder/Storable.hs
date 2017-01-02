@@ -1,4 +1,5 @@
 {-# LANGUAGE ScopedTypeVariables #-}
+{-# LANGUAGE MagicHash #-}
 {-# LANGUAGE ViewPatterns #-}
 {-# LANGUAGE PartialTypeSignatures #-}
 {-# LANGUAGE BangPatterns #-}
@@ -22,6 +23,8 @@ import Foreign (Storable(sizeOf), Ptr, plusPtr)
 import Foreign.ForeignPtr.Unsafe (unsafeForeignPtrToPtr)
 import Config
 import Text.Printf
+
+default (Int, Double)
 
 data VectorBuilder s a =
   VectorBuilder
@@ -141,8 +144,8 @@ pop l@VectorBuilder{next, store} n = do
   writeU next 0 (frontCount +  n)
   writeU next 1 (backCount - n)
   a <- readMutVar store
-  let l = M.length a
-  let first = fromIntegral l - backCount
+  let !l = M.length a
+  let !first = fromIntegral l - backCount
   forM_ [1..n] $ \i ->
     let from = frontCount - 1 + i
         to   = first+n-i
