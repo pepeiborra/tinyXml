@@ -16,7 +16,8 @@ import Control.Exception
 import Data.ByteString.Char8 (ByteString)
 import Data.ByteString.Internal (ByteString(..))
 import Data.List (genericTake)
-import Data.Vector.Storable (Vector)
+import Data.Vector.Storable (Vector, (!))
+import qualified Data.Vector.Storable as V
 import Data.Word
 import GHC.Stack hiding (SrcLoc)
 import Foreign.ForeignPtr       (ForeignPtr, withForeignPtr)
@@ -24,11 +25,13 @@ import Foreign.C.Types
 import Foreign
 import Prelude hiding (length)
 
+import Text.Printf
+
 import Config
 
 data Slice =
   Slice { offset, length :: !Int32 }
-  deriving (Eq,Show)
+  deriving (Eq,Ord,Show)
 sInt = sizeOf(0::Int32)
 
 instance Storable Slice where
@@ -49,7 +52,9 @@ take !i (Slice o _l) = Slice o (fromIntegral i) -- unsafe
 {-# INLINE drop #-}
 drop !i' (Slice o l) = let !i = fromIntegral i' in Slice (o+i) (l-i) -- unsafe
 
+-- | Inclusive
 sliceStart s = offset s
+-- | Non inclusive
 sliceEnd (Slice o l) = o + l
 
 toList :: Slice -> [Int]
@@ -60,6 +65,16 @@ fromIndexPtr :: Slice -> ForeignPtr Word8 -> ByteString
 fromIndexPtr = curry toBS where
   fromBS (PS fptr o l) = (Slice (fromIntegral o) (fromIntegral l), fptr)
   toBS (Slice o l, fptr) = PS fptr (fromIntegral o) (fromIntegral l)
+
+renderSlice :: Config => Slice -> ByteString -> ByteString
+renderSlice(Slice o l) _ | trace (printf "Render slice %d %d" o l) False = undefined
+renderSlice(Slice o l) _ | assert (o >= 0 && l >= 0) False = undefined
+renderSlice(Slice o l) (PS fptr _ _) = PS fptr (fromIntegral o) (fromIntegral l)
+
+vectorSlice :: Config => Storable a => Slice -> Vector a -> [a]
+vectorSlice s v = [ v ! i
+                  | i <- toList s
+                  , assert (i < V.length v) True ]
 
 {- Error types -}
 

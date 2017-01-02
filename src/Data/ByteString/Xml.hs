@@ -15,12 +15,14 @@ module Data.ByteString.Xml
   ) where
 
 import Control.Arrow ((&&&))
+import Control.Exception
 import qualified Data.ByteString.Xml.Internal.Types as Internal
 import Data.ByteString.Xml.Types as Slice
 import qualified Data.ByteString.Xml.Internal as Internal
 import Data.ByteString.Internal (ByteString(..))
 import qualified Data.ByteString.Char8 as BS
 import qualified Data.Foldable as F
+import Data.Int
 import Data.Maybe (listToMaybe)
 import Data.Vector.Storable (Vector, (!))
 import qualified Data.Vector.Storable as V
@@ -62,36 +64,32 @@ parse bs =
     Left e -> Left e
     Right (attV, nV, slices) -> Right $ Node attV nV bs slices
 
-renderSlice :: Slice -> ByteString -> ByteString
-renderSlice(Slice o l) (PS fptr _ _) = PS fptr (fromIntegral o) (fromIntegral l)
-
-vectorSlice :: Storable a => Slice -> Vector a -> [a]
-vectorSlice s v = [ v ! i | i <- Slice.toList s ]
-
-name, inner, outer :: Node -> ByteString
+name, inner, outer :: Config => Node -> ByteString
 name  Node{source, slices = Internal.Node{..}} = renderSlice name source
 inner Node{source, slices = Internal.Node{..}} = renderSlice inner source
 outer Node{source, slices = Internal.Node{..}} = renderSlice outer source
 
-attributes :: Node -> [Attribute]
+attributes :: Config => Node -> [Attribute]
 attributes Node{attributesV, source, slices = Internal.Node{attributes}} =
   [ Attribute (renderSlice n source) (renderSlice v source)
     | Internal.Attribute n v <- vectorSlice attributes attributesV ]
 
-
 -- | Get the slices of a node, including both the content strings (as 'Left', never blank) and
 --   the direct child nodes (as 'Right').
 --   If you only want the child nodes, use 'children'.
-contents :: Node -> [Either BS.ByteString Node]
-contents n@Node{source, slices=Internal.Node{inner}} = f (sliceStart inner) outers
+contents :: Config => Node -> [Either BS.ByteString Node]
+contents n@Node{source, slices=Internal.Node{inner}} =
+     f (sliceStart inner) (children n)
     where
+        f :: Config => Int32 -> [Node] -> [Either BS.ByteString Node]
         f i [] = string i (sliceEnd inner) ++ []
-        f i ((x, n):xs) = string i (sliceStart x) ++ Right n : f (sliceEnd x) xs
-
+        f i (n@Node{slices=Internal.Node{outer}} : nn) = string i (sliceStart outer) ++ Right n
+                                                       : f (sliceEnd outer) nn
+        string :: Config => Int32 -> Int32 -> [Either BS.ByteString Node]
         string start end
+          | assert (start<=end || error (printf "start=%d, end=%d" start end)) False = undefined
           | start == end = []
           | otherwise = [Left $ renderSlice (sliceFromOpenClose start end) source]
-        outers = map ((Internal.outer.slices) &&& id) $ children n
 
 -- | Get the direct child nodes of this node.
 children :: Node -> [Node]
@@ -99,15 +97,15 @@ children Node{slices = Internal.Node{nodeContents}, ..} =
   [ Node{..} | slices <- vectorSlice nodeContents nodesV ]
 
 -- | Get the direct children of this node which have a specific name.
-childrenBy :: Node -> BS.ByteString -> [Node]
+childrenBy :: Config => Node -> BS.ByteString -> [Node]
 childrenBy node str =
   filter (\n -> name n == str) (children node)
 
 -- | Get the first attribute of this node which has a specific name, if there is one.
-attributeBy :: Node -> BS.ByteString -> Maybe Attribute
+attributeBy :: Config => Node -> BS.ByteString -> Maybe Attribute
 attributeBy node str = listToMaybe [ a | a@(Attribute name _) <- attributes node, name == str ]
 
-location :: Node -> (Int, Int)
+location :: Config => Node -> (Int, Int)
 location Node{source, slices=Internal.Node{outer}} =
   BS.foldl' f (pair 1 1) $ BS.take (fromIntegral $ sliceStart outer) source
     where

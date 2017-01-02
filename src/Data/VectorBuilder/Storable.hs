@@ -73,7 +73,7 @@ request !n VectorBuilder{next,store} = do
   a <- readMutVar (store)
   let !len = M.length a
   unless (frontCount + backCount + n < fromIntegral len) $ do
-        trace "VectorBuilder - grow" $ return ()
+        return ()
         a' <- M.basicUnsafeNew (len*2)
         copyM (sliceM 0 frontCount a') (sliceM 0 frontCount a)
         copyM (sliceM (2 * fromIntegral len - backCount) backCount a') (sliceM (fromIntegral len - backCount) backCount a)
@@ -92,7 +92,7 @@ insert l@VectorBuilder{next,store} v = do
 
 -- | Push an element into a stack-like temporary storage. Returns the index from the back
 push :: (Config, PrimMonad m, Storable a) => VectorBuilder (PrimState m) a -> a -> m Int32
-push l@VectorBuilder{next,store} !v = trace "VectorBuilder.push" $ do
+push l@VectorBuilder{next,store} !v = do
   request 1 l
   stackCount <- readU  (next) 1
   writeU (next) 1 (stackCount + 1)

@@ -7,10 +7,10 @@ executable-profiling: False
 
 package bytestring-xml
   profiling-detail: toplevel-functions
-  tests: False
+  tests: True
   benchmarks: False
   optimization: 2
--- cpp-options: -DSTACKTRACES
+-- cpp-options: -DSTACKTRACES 
   ghc-options: -fllvm -pgmlo=opt-3.7 -pgmlc=llc-3.7
 
 package bytestring

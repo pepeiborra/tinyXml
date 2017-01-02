@@ -40,8 +40,8 @@ build-type:          Simple
 
 -- Extra files to be distributed with the package, such as examples or a 
 -- README.
-extra-source-files:  ChangeLog.md, benchmark.tar.bz
-extra-tmp-files:     benchmark.xml                  
+extra-source-files:  ChangeLog.md, xml/benchmark.xml.bz2
+extra-tmp-files:     xml/benchmark.xml                  
 
 -- Constraint on the version of Cabal needed to build this package.
 cabal-version:       >=1.22
@@ -85,17 +85,17 @@ library
   ghc-options:         -fno-warn-partial-type-signatures
   ghc-options:         -ddump-simpl -ddump-to-file -dsuppress-idinfo -dsuppress-module-prefixes -dsuppress-type-applications -dppr-cols=150 -dppr-case-as-let -dsuppress-coercions
   if flag(Debug)
-     cpp-options:         -DDEBUG
+     cpp-options:         -DDEBUG -DSTACKTRACES
 
 test-suite test
         type: exitcode-stdio-1.0
         main-is: Test.hs
         hs-source-dirs:      .,src
         default-language:    Haskell2010
-        build-depends: base, bytestring, bytestring-xml, mtl, containers, array, vector, primitive, ghc-prim
+        build-depends: base, bytestring, bytestring-xml, mtl, containers, array, vector >= 0.11, hexml, filepath, primitive, process
         default-language:    Haskell2010
         ghc-options:         -O0 -fno-warn-partial-type-signatures 
-        cpp-options:         -DENABLE_CONSISTENCY_CHECKS -DENABLE_VECTOR_CHECKS -DDEBUG -DSTACKTRACES
+        cpp-options:         -DENABLE_CONSISTENCY_CHECKS -DENABLE_VECTOR_CHECKS -DDEBUG -DSTACKTRACES  -DTRACE
         if impl(ghc < 8)
             default-extensions: FlexibleContexts
 

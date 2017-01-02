@@ -87,10 +87,8 @@ bsHead = bsIndex 0
 unsafeIO :: String -> IO a -> ParseMonad s a
 unsafeIO msg action = unsafeLiftIO $ do
 #ifdef TRACE_UNSAFE
-  putStrLn $ "About to start unsafe IO: " ++ msg
-  res <- action
-  putStrLn $ "Completed unsafe IO: " ++ msg
-  return res
+  res <- trace ("About to start unsafe IO: " ++ msg) $ action
+  trace ("Completed unsafe IO: " ++ msg) $ return res
 #else
   action
 #endif

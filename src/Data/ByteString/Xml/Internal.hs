@@ -88,7 +88,9 @@ parseName = {-# SCC "parseTrue" #-} do
   !first <- peek isName1
   case first of
     False -> return sliceEmpty
-    True  -> bsSpan isName
+    True  -> do
+      slice@(Slice o l) <- bsSpan isName
+      assert (l > 0 || error(show slice)) $ return slice
  where
     isName1 c = nameTable1 `unsafeAt` ord c
     isName c = nameTable `unsafeAt` ord c
@@ -225,7 +227,7 @@ parseContents = do
   !front <- getNodeBufferCount
   let diff = after - before
   popNodes diff
-  return $! sliceFromOpenClose front (front+diff)
+  return $! Slice front diff
 
 type ParseTable = UArray Int Bool
 
@@ -263,10 +265,10 @@ parse bs = unsafePerformIO $ do
     attributesV <- VectorBuilder.finalize attributeBuffer
     nodesV <- VectorBuilder.finalize nodeBuffer
     return $ (it, attributesV, nodesV)
-  let len = BS.length bs
+  let len = fromIntegral $ BS.length bs
   return $! case res of
     Right (!it, attributesV, nodesV) ->
-      let rootNode = Node sliceEmpty (sliceFromOpenClose 0 len) (sliceFromOpenClose 0 len) sliceEmpty it
+      let rootNode = Node sliceEmpty (Slice 0 len) (Slice 0 len) sliceEmpty it
       in Right (attributesV, nodesV, rootNode )
     Left e ->
       Left e
