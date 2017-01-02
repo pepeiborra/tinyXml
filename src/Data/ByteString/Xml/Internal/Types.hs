@@ -37,7 +37,7 @@ instance Storable Attribute where
 --  * contents   (Node slice)
 
 data Node =
-  Node { name, inner, outer, attributes, nodeContents :: Slice }
+  Node { name, inner, outer, attributes, nodeContents :: !Slice }
   deriving (Show)
 
 instance Storable Node where
