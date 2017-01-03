@@ -1,7 +1,7 @@
 {-# LANGUAGE Unsafe #-}
-{-# LANGUAGE FlexibleInstances, MultiParamTypeClasses, TypeFamilies #-}
-{-# LANGUAGE ScopedTypeVariables, PolyKinds, TypeInType #-}
-{-# LANGUAGE NoImplicitPrelude, MagicHash, UnboxedTuples, RankNTypes #-}
+{-# LANGUAGE FlexibleInstances, TypeFamilies #-}
+{-# LANGUAGE ScopedTypeVariables #-}
+{-# LANGUAGE MagicHash, UnboxedTuples, RankNTypes #-}
 {-# OPTIONS_GHC -fobject-code #-}
 
 module Control.Monad.STS (
