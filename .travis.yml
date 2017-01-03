@@ -34,6 +34,7 @@ install:
    fi
  - travis_retry cabal update -v
  - sed -i 's/^jobs:/-- jobs:/' ${HOME}/.cabal/config
+ - cabal install bench # required for benchmarks
  - cabal install --only-dependencies --enable-tests --enable-benchmarks --dry -v > installplan.txt
  - sed -i -e '1,/^Resolving /d' installplan.txt; cat installplan.txt
 
@@ -48,7 +49,7 @@ install:
      echo "cabal build-cache MISS";
      rm -rf $HOME/.cabsnap;
      mkdir -p $HOME/.ghc $HOME/.cabal/lib $HOME/.cabal/share $HOME/.cabal/bin;
-     cabal install --only-dependencies --enable-tests --enable-benchmarks;
+     cabal install --only-dependencies --enable-tests ;
    fi
 
 # snapshot package-db on cache miss
@@ -65,11 +66,11 @@ install:
 script:
  - if [ -f configure.ac ]; then autoreconf -i; fi
  - cabal clean
- - cabal configure --enable-tests --enable-benchmarks -O2
+ - cabal configure --enable-tests -O2
  - cabal build   # this builds all libraries and executables (including tests/benchmarks)
  - cabal test
- - cabal bench
- - cabal build validate
- - dist/build/validate/validate benchmark.xml +RTS -s
-
+ - dist/build/validate/validate xml/benchmark.xml +RTS -s
+ - cabal exec bench "dist/build/validate/validate xml/benchmark.xml" "dist/build/validateHexml/validateHexml xml/benchmark.xml"
+ - cabal exec bench "dist/build/validate/validate xml/benchmark.xml --reprint" "dist/build/validateHexml/validateHexml xml/benchmark.xml --reprint"
+ - cabal clean
 # EOF

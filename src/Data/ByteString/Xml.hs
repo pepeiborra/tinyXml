@@ -1,4 +1,5 @@
 {-# LANGUAGE BangPatterns #-}
+{-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE DisambiguateRecordFields #-}
 {-# LANGUAGE RecordWildCards #-}
 {-# LANGUAGE NamedFieldPuns #-}
@@ -9,7 +10,7 @@ module Data.ByteString.Xml
   , Slice(Slice)
   , Error(..)
   , ErrorType(..)
-  , parse
+  , parse, rerender
   , children, childrenBy
   , attributes, attributeBy
   ) where
@@ -22,8 +23,10 @@ import qualified Data.ByteString.Xml.Internal as Internal
 import Data.ByteString.Internal (ByteString(..))
 import qualified Data.ByteString.Char8 as BS
 import qualified Data.Foldable as F
+import Data.Char
 import Data.Int
 import Data.Maybe (listToMaybe)
+import Data.Monoid
 import Data.Vector.Storable (Vector, (!))
 import qualified Data.Vector.Storable as V
 import Foreign (Storable)
@@ -114,3 +117,19 @@ location Node{source, slices=Internal.Node{outer}} =
             | c == '\n' = pair (line+1) 1
             | c == '\t' = pair line (col+8)
             | otherwise = pair line (col+1)
+
+rerender :: Node -> BS.ByteString
+rerender = inside
+    where
+        inside x = BS.concat $ map (either validStr node) $ contents x
+        node x = "<" <> BS.unwords (validName (name x) : map attr (attributes x)) <> ">" <>
+                 inside x <>
+                 "</" <> name x <> ">"
+        attr (Attribute a b) = validName a <> "=\"" <> validAttr b <> "\""
+
+        validName x | BS.all (\x -> isAlphaNum x || x `elem` ("-:_" :: String)) x = x
+                    | otherwise = error "Invalid name"
+        validAttr x | BS.notElem '\"' x = x
+                    | otherwise = error "Invalid attribute"
+        validStr x | BS.notElem '<' x || BS.isInfixOf "<!--" x = x
+                   | otherwise = error $ show ("Invalid string", x)

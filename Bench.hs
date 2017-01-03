@@ -26,12 +26,8 @@ import GHC.Generics (Generic)
 
 
 main = do
-  paths0 <- getArgs
-  paths <- case paths0 of
-    _ : _ -> return paths0
-    [] -> do
-      callCommand "tar xf benchmark.tar.bz"
-      return ["benchmark.xml"]
+  callCommand "bunzip2 -f -k xml/benchmark.bz2"
+  let paths = ["xml/benchmark.xml"]
   let makeBenchmark :: String -> (forall a. NFData a => (a->c) -> a -> Benchmarkable) -> (forall a b .(Show a, Show b) => Either a b -> c) -> Benchmark
       makeBenchmark name force process =
        bgroup name $

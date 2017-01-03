@@ -157,18 +157,3 @@ instance (Show a, Show b, TestEq a a', TestEq b b') => TestEq (Either a b) (Eith
   Right x `testEq` Right x' = x `testEq` x'
   testEq a b = error $ printf "mismatch in children: %s /= %s" (show a) (show b)
 
-rerender :: Node -> BS.ByteString
-rerender = inside
-    where
-        inside x = BS.concat $ map (either validStr node) $ contents x
-        node x = "<" <> BS.unwords (validName (name x) : map attr (attributes x)) <> ">" <>
-                 inside x <>
-                 "</" <> name x <> ">"
-        attr (Attribute a b) = validName a <> "=\"" <> validAttr b <> "\""
-
-        validName x | BS.all (\x -> isAlphaNum x || x `elem` ("-:_" :: String)) x = x
-                    | otherwise = error "Invalid name"
-        validAttr x | BS.notElem '\"' x = x
-                    | otherwise = error "Invalid attribute"
-        validStr x | BS.notElem '<' x || BS.isInfixOf "<!--" x = x
-                   | otherwise = error $ show ("Invalid string", x)
