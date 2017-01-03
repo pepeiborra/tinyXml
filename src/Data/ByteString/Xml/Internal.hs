@@ -153,7 +153,7 @@ parseNode = do
               nameBS <- readStr name
               throwLoc (UnterminatedTag$ BS.unpack nameBS)
             SrcLoc innerOpen <- loc
-            me <- pushNode(Node name (sliceFromOpen innerOpen) (sliceFromOpen outerOpen) attrs sliceEmpty)
+            me <- pushNode(PreNode name attrs (fromIntegral innerOpen) (fromIntegral outerOpen))
             !nn <- parseContents
             SrcLoc innerClose <- loc
             isTagEnd <- bsIndex2 0 1 $ \c n -> c == '<' && n == '/'
@@ -169,7 +169,7 @@ parseNode = do
               Just i  -> skip $! (i+1)
               Nothing -> throwLoc BadTagForm
             SrcLoc outerClose <- loc
-            updateNode me $ \n@Node{name=name', inner = Slice innerOpen' _, outer = Slice outerOpen' _, attributes=attrs'} ->
+            updateNode me $ \n@PreNode{name=name', innerStart = innerOpen', outerStart = outerOpen', attributes=attrs'} ->
               assert (name==name') $
               assert (innerOpen == fromIntegral innerOpen' || error (printf "Expected:%d, Obtained:%d, me: %d, node: %s" innerOpen innerOpen' me (show n))) $
               assert (outerOpen == fromIntegral outerOpen' || error (printf "Expected:%d, Obtained:%d" outerOpen outerOpen')) $

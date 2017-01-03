@@ -37,14 +37,32 @@ instance Storable Attribute where
 --  * contents   (Node slice)
 
 data Node =
-  Node { name, inner, outer, attributes, nodeContents :: !Slice }
+    Node { name, inner, outer, attributes, nodeContents :: !Slice }
+  | PreNode { name, attributes :: !Slice, innerStart, outerStart :: !Int32 }
   deriving (Show)
 
+-- | Assumes that a name can never be the empty slice
 instance Storable Node where
   sizeOf    _ = sizeOf sliceEmpty * 5
   alignment _ = alignment(0::CInt)
-  peek q = let p = castPtr q in Node <$> peekElemOff p 0 <*> peekElemOff p 1 <*> peekElemOff p 2 <*> peekElemOff p 3 <*> peekElemOff p 4
-  poke q (Node a b c d e) = let p = castPtr q in pokeElemOff p 0 a >> pokeElemOff p 1 b >> pokeElemOff p 2 c >> pokeElemOff p 3 d >> pokeElemOff p 4 e
+  poke q (Node a b c d e)  = let p = castPtr q in pokeElemOff p 0 a >> pokeElemOff p 1 b >> pokeElemOff p 2 c >> pokeElemOff p 3 d >> pokeElemOff p 4 e
+  poke q (PreNode (Slice no nl) (Slice ao al) i o) =
+    let p = castPtr q in
+      pokeElemOff p 0 no >>
+      pokeElemOff p 1 (0::Int32)  >>
+      pokeElemOff p 2 nl >>
+      pokeElemOff p 3 ao >>
+      pokeElemOff p 4 al >>
+      pokeElemOff p 5 i  >>
+      pokeElemOff p 6 o
+  peek q = do
+    let p = castPtr q
+    header <- peekElemOff p 1
+    if header == (0::Int32)
+      then preNode <$> peekElemOff p 0 <*> peekElemOff p 2 <*> peekElemOff p 3 <*> peekElemOff p 4 <*> peekElemOff p 5 <*> peekElemOff p 6
+      else let p = castPtr q in Node <$> peekElemOff p 0 <*> peekElemOff p 1 <*> peekElemOff p 2 <*> peekElemOff p 3 <*> peekElemOff p 4
+     where
+       preNode no nl ao al = PreNode (Slice no nl) (Slice ao al)
 
 updateInner, updateOuter, updateContents :: Slice -> Ptr Node -> IO ()
 updateInner newV ptr = pokeByteOff ptr (1 * sizeOf sliceEmpty) newV
