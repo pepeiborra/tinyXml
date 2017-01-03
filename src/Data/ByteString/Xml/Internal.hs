@@ -28,7 +28,7 @@ import qualified Data.VectorBuilder.Storable as VectorBuilder
 import System.IO.Unsafe
 import Text.Printf
 
-import Data.ByteString.Xml.Monad
+import Data.ByteString.Xml.Internal.Monad
 import Data.ByteString.Xml.Internal.Checks
 import Data.ByteString.Xml.Internal.Types
 import Data.ByteString.Xml.Types as Slice

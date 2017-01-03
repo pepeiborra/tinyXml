@@ -57,13 +57,13 @@ library
   -- Modules exported by the library.
   exposed-modules:     Data.ByteString.Xml,
                        Data.ByteString.Xml.Types,
-                       Data.ByteString.Xml.Internal,
                        Data.ByteString.Xml.Internal.Checks,
                        Data.ByteString.Xml.Internal.Types,
-                       Data.ByteString.Xml.Monad,
                        Data.VectorBuilder.Storable
   other-modules:       Config,
-                       Control.Monad.STS
+                       Control.Monad.STS,
+                       Data.ByteString.Xml.Internal,
+                       Data.ByteString.Xml.Internal.Monad
 
   if impl(ghc < 8)
             default-extensions: FlexibleContexts

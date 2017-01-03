@@ -16,7 +16,7 @@
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
 {-# LANGUAGE CPP #-}
 
-module Data.ByteString.Xml.Monad where
+module Data.ByteString.Xml.Internal.Monad where
 import qualified Control.Exception as CE
 import Control.Monad
 import Control.Monad.Primitive
