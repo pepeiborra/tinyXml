@@ -1,6 +1,7 @@
 packages:
   bytestring-xml.cabal
   /Users/pepe/scratch/hexml/
+  /Users/pepe/scratch/vector-0.11.0.0/
 
 profiling: False
 executable-profiling: False
@@ -10,7 +11,6 @@ package bytestring-xml
   tests: True
   benchmarks: False
   optimization: 2
--- cpp-options: -DSTACKTRACES 
   ghc-options: -fllvm -pgmlo=opt-3.7 -pgmlc=llc-3.7
 
 package bytestring
