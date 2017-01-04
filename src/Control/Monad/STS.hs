@@ -1,4 +1,5 @@
 {-# LANGUAGE Unsafe #-}
+{-# LANGUAGE CPP #-}
 {-# LANGUAGE FlexibleInstances, TypeFamilies #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE MagicHash, UnboxedTuples, RankNTypes #-}
@@ -62,9 +63,13 @@ instance  Show (STS s a)  where
     showsPrec _ _  = showString "<<STS action>>"
     showList       = showList__ (showsPrec 0)
 
-{-# INLINE runSTS #-}
 runSTS :: Int# -> Int# -> (forall s. STS s a) -> a
 runSTS o l (STS st_rep) =
-  let comp s = case st_rep s o l of  (# s', o', l', r #) -> (# s', r #)
+#if __GLASGOW_HASKELL__ >= 800
+  let comp s = case st_rep s o l of  (# s', _o', _l', r #) -> (# s', r #)
   in case runRW# comp of (# _, a #) -> a
--- See Note [Definition of runRW#] in GHC.Magic
+{-# INLINE runSTS #-}
+#else
+  case st_rep realWorld# o l of (# _, _, _, a #) -> a
+{-# NOINLINE runSTS #-}
+#endif
