@@ -1,5 +1,5 @@
+{-# OPTIONS_GHC -fno-warn-name-shadowing #-}
 {-# LANGUAGE DisambiguateRecordFields #-}
-{-# LANGUAGE ViewPatterns #-}
 {-# LANGUAGE FlexibleContexts, FlexibleInstances #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE ConstraintKinds #-}
@@ -9,48 +9,37 @@
 {-# LANGUAGE OverloadedLists #-}
 {-# LANGUAGE PartialTypeSignatures #-}
 {-# LANGUAGE MultiParamTypeClasses #-}
+{-# LANGUAGE CPP #-}
 {-# LANGUAGE BangPatterns #-}
 {-# LANGUAGE NamedFieldPuns #-}
 
-module Data.ByteString.Xml.Internal (parse) where
+module Text.Xml.Tiny.Internal.Parser (parse) where
 
-import Control.Applicative
-import Control.Exception (Exception, try, evaluate, assert)
+import Control.Exception (try, evaluate, assert)
 import Control.Monad
 import Control.Monad.State.Class
-import Data.ByteString.Unsafe as BS
 import qualified Data.ByteString.Char8 as BS
-import Data.ByteString.Internal (w2c, ByteString(..))
+import Data.ByteString.Internal (ByteString(..))
 import Data.Char hiding (Space)
-import Data.Array.Unboxed
-import Data.Array.Base as A
 import qualified Data.VectorBuilder.Storable as VectorBuilder
+import qualified Data.Vector.Unboxed as U
 import System.IO.Unsafe
 import Text.Printf
 
-import Data.ByteString.Xml.Internal.Monad
-import Data.ByteString.Xml.Internal.Checks
-import Data.ByteString.Xml.Internal.Types
-import Data.ByteString.Xml.Types as Slice
+import Text.Xml.Tiny.Internal.Monad
+import Text.Xml.Tiny.Internal.Types
+import Text.Xml.Tiny.Types as Slice
 import Config
 
 default (Int, Double)
 
-{-# INLINE peekAt #-}
-peekAt :: Config => Int -> (Char -> Bool) -> ParseMonad s Bool
-peekAt n pred = bsIndex n pred
-
-{-# INLINE peek #-}
-peek :: Config => (Char -> Bool) -> ParseMonad s Bool
-peek pred = bsHead pred
-
 {-# INLINE skip #-}
 skip :: (Integral a, Config) => a -> ParseMonad s ()
-skip n = modify $ Slice.drop n
+skip = modify . Slice.drop
 
 {-# INLINE pop #-}
 pop :: Config => (Char -> a) -> ParseMonad s a
-pop pred = bsHead pred <* skip 1
+pop pred = peek pred <* skip 1
 
 {-# INLINE findAndPop #-}
 findAndPop :: Config => Char -> (SrcLoc -> ErrorType) -> (Slice -> ParseMonad s r) -> ParseMonad s r
@@ -70,7 +59,7 @@ trim :: Config => ParseMonad s ()
 trim =
   bsDropWhile isSpace
     where
-      isSpace !c = spaceTable `unsafeAt` ord c
+      isSpace !c = spaceTable `indexU` ord c
 
 {-# INLINE expectLoc #-}
 expectLoc :: Config => (Char -> Bool) -> _ -> ParseMonad s ()
@@ -83,16 +72,16 @@ expectLoc pred e = do
 
 {-# INLINE parseName #-}
 parseName :: Config => ParseMonad s Slice
-parseName = {-# SCC "parseTrue" #-} do
+parseName = do
   !first <- peek isName1
   case first of
     False -> return sliceEmpty
     True  -> do
-      slice@(Slice o l) <- bsSpan isName
+      slice@(Slice _ l) <- bsSpan isName
       assert (l > 0 || error(show slice)) $ return slice
  where
-    isName1 c = nameTable1 `unsafeAt` ord c
-    isName c = nameTable `unsafeAt` ord c
+    isName1 c = nameTable1 `indexU` ord c
+    isName  c = nameTable  `indexU` ord c
 
 -- | Assumes cursor is on a '='
 {-# INLINE parseAttrVal #-}
@@ -103,13 +92,13 @@ parseAttrVal n = do
   trim
   !c  <- pop id
   unless (c == '\'' || c == '\"') (throwLoc BadAttributeForm)
-  findAndPop c BadAttributeForm (insertAttribute . (Attribute n))
+  findAndPop c BadAttributeForm (insertAttribute . Attribute n)
 
 {-# INLINE parseAttr #-}
 parseAttr :: Config => ParseMonad s Bool
 parseAttr = do
     trim
-    !n <-{-# SCC "parseName" #-} parseName
+    !n <- parseName
     if Slice.null n
       then return False
       else do
@@ -134,7 +123,7 @@ parseNode = do
     expectLoc (== '<') $ \c -> error( "parseNode: expected < got " ++ [c] )
     !c <- peek (== '?')
     when c (skip 1)
-    !name <- {-# SCC "parseName" #-} parseName
+    !name <- parseName
     when (Slice.null name) $ throwLoc InvalidNullName
     do
         !attrs <- parseAttrs
@@ -144,7 +133,7 @@ parseNode = do
           then do
             skip 1
             SrcLoc outerClose <- loc
-            let !outer = sliceFromOpenClose outerOpen outerClose
+            let !outer = fromOpenClose outerOpen outerClose
             let inner = sliceEmpty
             _ <- pushNode(Node name inner outer attrs sliceEmpty)
             return ()
@@ -153,7 +142,7 @@ parseNode = do
               nameBS <- readStr name
               throwLoc (UnterminatedTag$ BS.unpack nameBS)
             SrcLoc innerOpen <- loc
-            me <- pushNode(PreNode name attrs (fromIntegral innerOpen) (fromIntegral outerOpen))
+            me <- pushNode(ProtoNode name attrs (fromIntegral innerOpen) (fromIntegral outerOpen))
             !nn <- parseContents
             SrcLoc innerClose <- loc
             isTagEnd <- bsIndex2 0 1 $ \c n -> c == '<' && n == '/'
@@ -169,11 +158,11 @@ parseNode = do
               Just i  -> skip $! (i+1)
               Nothing -> throwLoc BadTagForm
             SrcLoc outerClose <- loc
-            updateNode me $ \n@PreNode{name=name', innerStart = innerOpen', outerStart = outerOpen', attributes=attrs'} ->
+            updateNode me $ \n@ProtoNode{name=name', innerStart = innerOpen', outerStart = outerOpen', attributes=attrs'} ->
               assert (name==name') $
               assert (innerOpen == fromIntegral innerOpen' || error (printf "Expected:%d, Obtained:%d, me: %d, node: %s" innerOpen innerOpen' me (show n))) $
               assert (outerOpen == fromIntegral outerOpen' || error (printf "Expected:%d, Obtained:%d" outerOpen outerOpen')) $
-              Node name' (sliceFromOpenClose innerOpen' innerClose) (sliceFromOpenClose outerOpen' outerClose) attrs' nn
+              Node name' (fromOpenClose innerOpen' innerClose) (fromOpenClose outerOpen' outerClose) attrs' nn
 
 commentEnd :: ParseMonad s ()
 {-# INLINE commentEnd #-}
@@ -190,14 +179,10 @@ commentEnd  = do
 dropComments :: ParseMonad s Bool
 dropComments = do
   !x <- bsIsPrefix "<!--"
-  case x of
-    False ->
-      return False
-    True -> do
-      !bs <- getBS
-      skip 4
-      commentEnd
-      return True
+  when x $ do
+    skip 4
+    commentEnd
+  return x
 
 -- | Returns a slice of nodes
 parseContents :: forall s. Config => ParseMonad s Slice
@@ -211,7 +196,7 @@ parseContents = do
             skip i
             !next <- peekAt 1 (== '/')
             unless next $ do
-                !wasComment <- {-# SCC "dropComments" #-} dropComments
+                !wasComment <- dropComments
                 if wasComment
                   then
                     goParseContents
@@ -228,33 +213,33 @@ parseContents = do
   popNodes diff
   return $! Slice front diff
 
-type ParseTable = UArray Int Bool
+type ParseTable = U.Vector Bool
 
 -- TODO compute at compile time?
 spaceTable,nameTable,nameTable1 :: ParseTable
-spaceTable = listArray (0,255) [ isSpace (chr i) | i <- [0..255]]
+spaceTable = U.generate 256 (isSpace . chr)
 
-nameTable =
-  listArray (0,255)
-  [ case chr i of
+nameTable = U.generate 256 $ \i ->
+   case chr i of
       ':' -> True
       '_' -> True
       c | isLetter c -> True
       '-' -> True
       c | isDigit c -> True
       _   -> False
-    | i <- [0..255]
-    ]
-nameTable1 =
-  listArray (0,255)
-  [ case chr i of
+
+nameTable1 = U.generate 256 $ \i ->
+   case chr i of
       ':' -> True
       '_' -> True
       c | isLetter c -> True
       _   -> False
-    | i <- [0..255]
-    ]
 
+#ifdef ENABLE_VECTOR_CHECKS
+indexU = (U.!)
+#else
+indexU = U.unsafeIndex
+#endif
 
 parse :: Config => ByteString -> Either Error _
 parse bs = unsafePerformIO $ do
@@ -263,7 +248,7 @@ parse bs = unsafePerformIO $ do
     Env{attributeBuffer, nodeBuffer} <- getEnv
     attributesV <- VectorBuilder.finalize attributeBuffer
     nodesV <- VectorBuilder.finalize nodeBuffer
-    return $ (it, attributesV, nodesV)
+    return (it, attributesV, nodesV)
   let len = fromIntegral $ BS.length bs
   return $! case res of
     Right (!it, attributesV, nodesV) ->

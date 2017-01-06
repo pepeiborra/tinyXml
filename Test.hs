@@ -19,9 +19,9 @@ import System.FilePath
 import Text.Printf
 
 import Config
-import Data.ByteString.Xml hiding (length)
-import Data.ByteString.Xml.Types hiding (length)
-import qualified Data.ByteString.Xml.Internal.Types as Internal
+import Text.Xml.Tiny hiding (length)
+import Text.Xml.Tiny.Types hiding (length)
+import qualified Text.Xml.Tiny.Internal.Types as Internal
 
 examples :: [(Bool, BS.ByteString)]
 examples =

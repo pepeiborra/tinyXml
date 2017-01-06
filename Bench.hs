@@ -1,7 +1,7 @@
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE Rank2Types #-}
 {-# LANGUAGE StandaloneDeriving, DeriveGeneric #-}
-import Data.ByteString.Xml
+import Text.Xml.Tiny
 import Control.DeepSeq
 import Control.Monad
 import Data.Default
@@ -26,7 +26,7 @@ import GHC.Generics (Generic)
 
 
 main = do
-  callCommand "bunzip2 -f -k xml/benchmark.bz2"
+  callCommand "bunzip2 -f -k xml/benchmark.xml.bz2"
   let paths = ["xml/benchmark.xml"]
   let makeBenchmark :: String -> (forall a. NFData a => (a->c) -> a -> Benchmarkable) -> (forall a b .(Show a, Show b) => Either a b -> c) -> Benchmark
       makeBenchmark name force process =

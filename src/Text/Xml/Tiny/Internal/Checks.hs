@@ -1,24 +1,27 @@
 {-# LANGUAGE ViewPatterns, NamedFieldPuns, CPP #-}
-module Data.ByteString.Xml.Internal.Checks where
+module Text.Xml.Tiny.Internal.Checks where
 
 import Control.Monad
 import Control.Monad.Reader.Class
 import Control.Monad.State.Class
 import Data.ByteString.Internal
-import Data.ByteString.Xml.Types as Slice
-import Data.ByteString.Xml.Internal.Types
+import Text.Xml.Tiny.Types as Slice
+import Text.Xml.Tiny.Internal.Types
 import qualified Data.ByteString.Char8 as BS
 import Text.Printf
 
 #ifdef ENABLE_CONSISTENCY_CHECKS
 doStackChecks = True
 doCursorChecks = True
+doParseTableChecks = True
 #else
 doStackChecks = False
 doCursorChecks = False
+doParseTableChecks = False
 #endif
 {-# INLINE doStackChecks #-}
 {-# INLINE doCursorChecks #-}
+{-# INLINE doParseTableChecks #-}
 
 -- checkCursor :: ParseMonad s ()
 checkBSaccess o l o0 l0 =

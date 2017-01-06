@@ -4,21 +4,17 @@
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE TypeOperators     #-}
 
-import Options.Generic
-
-import Data.ByteString.Xml
+import Text.Xml.Tiny
 import Control.Monad
 import qualified Data.ByteString.Char8 as BS
 
+import Options.Generic
 import System.Directory
 import System.FilePath
 import System.IO
 import System.Environment
 
 import Text.Printf
-
-process :: Show a => Either a b -> String
-process = either show (const "Success")
 
 data Options =
   Options { reprint :: Bool <?> "Reprint the XML document" }

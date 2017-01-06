@@ -1,12 +1,12 @@
 packages:
-  bytestring-xml.cabal
+  tinyXml.cabal
   /Users/pepe/scratch/hexml/
   /Users/pepe/scratch/vector-0.11.0.0/
 
 profiling: False
 executable-profiling: False
 
-package bytestring-xml
+package tinyXml
   profiling-detail: toplevel-functions
   tests: True
   benchmarks: False

@@ -1,13 +1,17 @@
+{- Module: Text.Xml.Tiny
+   Description: A fast DOM parser for a subset of XML. 
+-}
 {-# LANGUAGE BangPatterns #-}
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE DisambiguateRecordFields #-}
 {-# LANGUAGE RecordWildCards #-}
 {-# LANGUAGE NamedFieldPuns #-}
 
-module Data.ByteString.Xml
+module Text.Xml.Tiny
   ( Node(..), name, inner, outer, contents, location
   , Attribute(..)
   , Slice(Slice)
+  , SrcLoc(..)
   , Error(..)
   , ErrorType(..)
   , parse, rerender
@@ -15,14 +19,12 @@ module Data.ByteString.Xml
   , attributes, attributeBy
   ) where
 
-import Control.Arrow ((&&&))
 import Control.Exception
-import qualified Data.ByteString.Xml.Internal.Types as Internal
-import Data.ByteString.Xml.Types as Slice
-import qualified Data.ByteString.Xml.Internal as Internal
+import qualified Text.Xml.Tiny.Internal.Types as Internal
+import Text.Xml.Tiny.Types as Slice
+import qualified Text.Xml.Tiny.Internal.Parser as Internal
 import Data.ByteString.Internal (ByteString(..))
 import qualified Data.ByteString.Char8 as BS
-import qualified Data.Foldable as F
 import Data.Char
 import Data.Int
 import Data.Maybe (listToMaybe)
@@ -33,6 +35,7 @@ import Foreign (Storable)
 import Config
 import Text.Printf
 
+-- A parsed XML node
 data Node =
   Node{ attributesV :: !(Vector Internal.Attribute)
       , nodesV      :: !(Vector Internal.Node)
@@ -59,8 +62,10 @@ instance Show Node where
        showNodeContents (Left txt) =
           [ "Text content: " ++ BS.unpack txt ]
 
+-- | A parsed XML attribute
 data Attribute = Attribute { attributeName, attributeValue :: !ByteString } deriving (Eq, Show)
 
+-- | Parse an XML bytestring
 parse :: Config => ByteString -> Either Error Node
 parse bs =
   case Internal.parse bs of
@@ -92,7 +97,7 @@ contents n@Node{source, slices=Internal.Node{inner}} =
         string start end
           | assert (start<=end || error (printf "start=%d, end=%d" start end)) False = undefined
           | start == end = []
-          | otherwise = [Left $ renderSlice (sliceFromOpenClose start end) source]
+          | otherwise = [Left $ renderSlice (fromOpenClose start end) source]
 
 -- | Get the direct child nodes of this node.
 children :: Node -> [Node]
@@ -108,6 +113,7 @@ childrenBy node str =
 attributeBy :: Config => Node -> BS.ByteString -> Maybe Attribute
 attributeBy node str = listToMaybe [ a | a@(Attribute name _) <- attributes node, name == str ]
 
+-- | Get the (line, col) coordinates of a node w.r.t its original document 
 location :: Config => Node -> (Int, Int)
 location Node{source, slices=Internal.Node{outer}} =
   BS.foldl' f (pair 1 1) $ BS.take (fromIntegral $ sliceStart outer) source
@@ -118,6 +124,7 @@ location Node{source, slices=Internal.Node{outer}} =
             | c == '\t' = pair line (col+8)
             | otherwise = pair line (col+1)
 
+-- | Returns the XML bytestring reconstructed from the parsed AST. 
 rerender :: Node -> BS.ByteString
 rerender = inside
     where

@@ -4,25 +4,26 @@
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE MagicHash, UnboxedTuples, RankNTypes #-}
 {-# OPTIONS_GHC -fobject-code #-}
-
+{-
+Module: Control.Monad.STS
+Description: A hand-rolled version of the ST monad with functional, unboxed state
+Copyright: (c) Jose Iborra 2017
+License: GPL-3
+Maintainer: pepeiborra@gmail.com
+Stability: experimental
+-}
 module Control.Monad.STS (
         STS(..), STSRep,
         runSTS,
         unsafeIOToSTS
-
-        -- * Unsafe functions
     ) where
 
 import GHC.Base
-import GHC.Exts
 import GHC.IO
 import GHC.ST
 import GHC.Show
 
-import Control.Monad.State.Class
 import Control.Monad.Primitive
-
-default ()
 
 newtype STS s a = STS {unSTS :: STSRep s a}
 type STSRep s a = State# s -> Int# -> Int# -> (# State# s, Int#, Int#, a #)
@@ -32,19 +33,16 @@ liftST (ST m) = STS $ \s o l -> case m s of (# s', r #) -> (# s', o, l, r #)
 unsafeIOToSTS :: IO a -> STS s a
 unsafeIOToSTS = Control.Monad.STS.liftST . unsafeIOToST
 
--- | @since 2.01
 instance Functor (STS s) where
     fmap f (STS m) = STS $ \ s o l ->
-      case (m s o l) of { (# new_s, o', l', r #) ->
+      case m s o l of { (# new_s, o', l', r #) ->
       (# new_s, o', l', f r #) }
 
--- | @since 4.4.0.0
 instance Applicative (STS s) where
     {-# INLINE pure #-}
     pure x = STS (\ s o l -> (# s, o, l, x #) )
     (<*>) = ap
 
--- | @since 2.01
 instance Monad (STS s) where
     {-# INLINE (>>=)  #-}
     STS m >>= k
@@ -58,10 +56,9 @@ instance PrimMonad (STS s) where
   {-# INLINE primitive #-}
   primitive m = STS $ \s o l -> let (# s', r #) = m s in (# s', o, l, r #)
 
--- | @since 2.01
 instance  Show (STS s a)  where
     showsPrec _ _  = showString "<<STS action>>"
-    showList       = showList__ (showsPrec 0)
+    showList       = showList__ shows
 
 runSTS :: Int# -> Int# -> (forall s. STS s a) -> a
 runSTS o l (STS st_rep) =
