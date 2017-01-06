@@ -1,17 +1,17 @@
 packages:
-  bytestring-xml.cabal
+  tinyXml.cabal
   /Users/pepe/scratch/hexml/
-  /Users/pepe/scratch/bytestring-0.10.8.1/
+  /Users/pepe/scratch/vector-0.11.0.0/
 
-executable-profiling: False
 profiling: False
+executable-profiling: False
 
-package bytestring-xml
+package tinyXml
   profiling-detail: toplevel-functions
   tests: True
   benchmarks: False
   optimization: 2
-  ghc-options: 
+  ghc-options: -fllvm -pgmlo=opt-3.7 -pgmlc=llc-3.7
 
 package bytestring
   profiling-detail: exported-functions
