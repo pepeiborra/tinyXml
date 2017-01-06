@@ -71,8 +71,8 @@ script:
  - cabal build   # this builds all libraries and executables (including tests/benchmarks)
  - cabal test
  - dist/build/validate/validate xml/benchmark.xml +RTS -s -K1k
- - bunzip2 -k xml/benchmark.xml.bz2
- - cabal exec bench "dist/build/validate/validate xml/benchmark.xml" 
+ - if ! [ -f xml/benchmark.xml ]; then bunzip2 -k xml/benchmark.xml.bz2; fi
+ - cabal exec bench "dist/build/validate/validate xml/benchmark.xml"
  - cabal exec bench "dist/build/validate/validate xml/benchmark.xml --reprint"
  - cabal clean
 # EOF
