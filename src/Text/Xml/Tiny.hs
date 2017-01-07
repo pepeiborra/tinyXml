@@ -1,27 +1,26 @@
-{- Module: Text.Xml.Tiny
-   Description: A fast DOM parser for a subset of XML. 
--}
+{-# OPTIONS_GHC -fno-warn-orphans -fno-warn-name-shadowing #-}
 {-# LANGUAGE BangPatterns #-}
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE DisambiguateRecordFields #-}
 {-# LANGUAGE RecordWildCards #-}
 {-# LANGUAGE NamedFieldPuns #-}
 
+-- | This module contains functions for parsing an XML document and deconstructing the AST.
 module Text.Xml.Tiny
-  ( Node(..), name, inner, outer, contents, location
+  ( Node, name, inner, outer, contents, location
   , Attribute(..)
-  , Slice(Slice)
+  , parse
+  , children, childrenBy
+  , attributes, attributeBy
   , SrcLoc(..)
   , Error(..)
   , ErrorType(..)
-  , parse, rerender
-  , children, childrenBy
-  , attributes, attributeBy
+  , rerender
   ) where
 
 import Control.Exception
-import qualified Text.Xml.Tiny.Internal.Types as Internal
-import Text.Xml.Tiny.Types as Slice
+import Text.Xml.Tiny.Internal (Node(..), Attribute(..), ParseDetails(ParseDetails), AttributeParseDetails(..), Error(..), ErrorType(..), SrcLoc(..))
+import qualified Text.Xml.Tiny.Internal as Slice
 import qualified Text.Xml.Tiny.Internal.Parser as Internal
 import Data.ByteString.Internal (ByteString(..))
 import qualified Data.ByteString.Char8 as BS
@@ -29,80 +28,62 @@ import Data.Char
 import Data.Int
 import Data.Maybe (listToMaybe)
 import Data.Monoid
-import Data.Vector.Storable (Vector, (!))
-import qualified Data.Vector.Storable as V
-import Foreign (Storable)
 import Config
 import Text.Printf
 
--- A parsed XML node
-data Node =
-  Node{ attributesV :: !(Vector Internal.Attribute)
-      , nodesV      :: !(Vector Internal.Node)
-      , source      :: !ByteString
-      , slices      :: !Internal.Node
-      }
-
-instance Show Node where
-  show n =
-    unlines $
-         "Nodes buffer: "
-       : [ "  " ++ show n | n <- V.toList $ nodesV n]
-       ++ showNodeContents (Right n)
-     where
-       showNodeContents :: Either ByteString Node -> [String]
-       showNodeContents (Right n) =
-          [ "Node contents:"
-          , "  name: " ++ show (name n)
-          , "  slices: " ++ show (slices n)
-          , "  attributes: " ++ (show $ attributes n)
-          , "  contents: "
-          ] ++
-          [ "    " ++ l | n' <- contents n, l <- showNodeContents n']
-       showNodeContents (Left txt) =
-          [ "Text content: " ++ BS.unpack txt ]
-
--- | A parsed XML attribute
-data Attribute = Attribute { attributeName, attributeValue :: !ByteString } deriving (Eq, Show)
-
--- | Parse an XML bytestring
+-- | Parse an XML bytestring, returning a root node with name "" and the content AST, or an error.
+--   Note that the returned AST references the input bytestring and will therefore keep it alive.
 parse :: Config => ByteString -> Either Error Node
 parse bs =
   case Internal.parse bs of
     Left e -> Left e
     Right (attV, nV, slices) -> Right $ Node attV nV bs slices
 
-name, inner, outer :: Config => Node -> ByteString
-name  Node{source, slices = Internal.Node{..}} = renderSlice name source
-inner Node{source, slices = Internal.Node{..}} = renderSlice inner source
-outer Node{source, slices = Internal.Node{..}} = renderSlice outer source
+instance Show Node where
+  -- | Returns a simplified rendering of the node.
+  --   If you want a full rendering, use `outer`
+  show n =
+    case children n of
+      [] -> printf "<%s%s/>" nameN attrs
+      _  -> printf "<%s%s>...</%s>" nameN attrs nameN
+   where
+    nameN = BS.unpack $ name n
+    attrs = unwords [ BS.unpack n <> "=" <> BS.unpack v | Attribute n v <- attributes n]
 
+name, inner, outer :: Config => Node -> ByteString
+-- | The tag name
+name  Node{source, slices = ParseDetails{..}} = Slice.render name source
+-- | The content of the tag, excluding the tag itself
+inner Node{source, slices = ParseDetails{..}} = Slice.render inner source
+-- | The contents of the tag, including the tag itself
+outer Node{source, slices = ParseDetails{..}} = Slice.render outer source
+-- | The attributes in the tag, if any.
 attributes :: Config => Node -> [Attribute]
-attributes Node{attributesV, source, slices = Internal.Node{attributes}} =
-  [ Attribute (renderSlice n source) (renderSlice v source)
-    | Internal.Attribute n v <- vectorSlice attributes attributesV ]
+attributes Node{attributesV, source, slices = ParseDetails{attributes}} =
+  [ Attribute (Slice.render n source) (Slice.render v source)
+    | AttributeParseDetails n v <- Slice.vector attributes attributesV ]
 
 -- | Get the slices of a node, including both the content strings (as 'Left', never blank) and
 --   the direct child nodes (as 'Right').
 --   If you only want the child nodes, use 'children'.
 contents :: Config => Node -> [Either BS.ByteString Node]
-contents n@Node{source, slices=Internal.Node{inner}} =
-     f (sliceStart inner) (children n)
+contents n@Node{source, slices=ParseDetails{inner}} =
+     f (Slice.start inner) (children n)
     where
         f :: Config => Int32 -> [Node] -> [Either BS.ByteString Node]
-        f i [] = string i (sliceEnd inner) ++ []
-        f i (n@Node{slices=Internal.Node{outer}} : nn) = string i (sliceStart outer) ++ Right n
-                                                       : f (sliceEnd outer) nn
+        f i [] = string i (Slice.end inner) ++ []
+        f i (n@Node{slices=ParseDetails{outer}} : nn) = string i (Slice.start outer) ++ Right n
+                                                       : f (Slice.end outer) nn
         string :: Config => Int32 -> Int32 -> [Either BS.ByteString Node]
         string start end
           | assert (start<=end || error (printf "start=%d, end=%d" start end)) False = undefined
           | start == end = []
-          | otherwise = [Left $ renderSlice (fromOpenClose start end) source]
+          | otherwise = [Left $ Slice.render (Slice.fromOpenClose start end) source]
 
 -- | Get the direct child nodes of this node.
 children :: Node -> [Node]
-children Node{slices = Internal.Node{nodeContents}, ..} =
-  [ Node{..} | slices <- vectorSlice nodeContents nodesV ]
+children Node{slices = ParseDetails{nodeContents}, ..} =
+  [ Node{..} | slices <- Slice.vector nodeContents nodesV ]
 
 -- | Get the direct children of this node which have a specific name.
 childrenBy :: Config => Node -> BS.ByteString -> [Node]
@@ -113,10 +94,10 @@ childrenBy node str =
 attributeBy :: Config => Node -> BS.ByteString -> Maybe Attribute
 attributeBy node str = listToMaybe [ a | a@(Attribute name _) <- attributes node, name == str ]
 
--- | Get the (line, col) coordinates of a node w.r.t its original document 
+-- | Get the (line, col) coordinates of a node
 location :: Config => Node -> (Int, Int)
-location Node{source, slices=Internal.Node{outer}} =
-  BS.foldl' f (pair 1 1) $ BS.take (fromIntegral $ sliceStart outer) source
+location Node{source, slices=ParseDetails{outer}} =
+  BS.foldl' f (pair 1 1) $ BS.take (fromIntegral $ Slice.start outer) source
     where
         pair !a !b = (a,b)
         f (!line, !col) c
@@ -124,7 +105,8 @@ location Node{source, slices=Internal.Node{outer}} =
             | c == '\t' = pair line (col+8)
             | otherwise = pair line (col+1)
 
--- | Returns the XML bytestring reconstructed from the parsed AST. 
+-- | Returns the XML bytestring reconstructed from the parsed AST.
+--   For the original XML, use `outer`
 rerender :: Node -> BS.ByteString
 rerender = inside
     where

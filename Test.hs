@@ -1,4 +1,5 @@
 
+{-# OPTIONS_GHC -fno-warn-name-shadowing #-}
 {-# LANGUAGE FlexibleContexts, FlexibleInstances #-}
 {-# LANGUAGE MultiParamTypeClasses #-}
 {-# LANGUAGE NamedFieldPuns #-}
@@ -14,14 +15,15 @@ import Data.Foldable
 import Data.List (sort)
 import Data.Monoid
 import qualified Data.ByteString.Char8 as BS
+import qualified Data.Vector.Storable as V
 import System.Process (callCommand)
 import System.FilePath
 import Text.Printf
 
 import Config
-import Text.Xml.Tiny hiding (length)
-import Text.Xml.Tiny.Types hiding (length)
-import qualified Text.Xml.Tiny.Internal.Types as Internal
+import Text.Xml.Tiny
+import Text.Xml.Tiny.Internal(Node(..), Attribute(..), ParseDetails(ParseDetails), AttributeParseDetails(..), Slice)
+import qualified Text.Xml.Tiny.Internal as Slice
 
 examples :: [(Bool, BS.ByteString)]
 examples =
@@ -97,36 +99,36 @@ pairs f _ = True
 
 checkStructure :: Config => Node -> IO ()
 checkStructure n = checkNode [] n where
-  checkNode path n@Node{attributesV, slices=Internal.Node{attributes}} = do
+  checkNode path n@Node{attributesV, slices=ParseDetails{attributes}} = do
     let nn = children n
     unless (sorted nn) $ fail "not sorted"
     unless (pairs (nonOverlapping path) nn) $ fail "overlapping children nodes"
-    unless (pairs nonOverlappingA (vectorSlice attributes attributesV)) $ fail "overlapping attributes"
+    unless (pairs nonOverlappingA (Slice.vector attributes attributesV)) $ fail "overlapping attributes"
     putChar '.'
     forM_ nn $ \n' -> checkNode (name n : path) n'
 
   nonOverlapping :: Config => [BS.ByteString] -> Node -> Node -> Bool
-  nonOverlapping path n1@Node{slices=Internal.Node{outer=o1}} n2@Node{slices=Internal.Node{outer=o2}} =
+  nonOverlapping path n1@Node{slices=ParseDetails{outer=o1}} n2@Node{slices=ParseDetails{outer=o2}} =
     nonOverlappingS o1 o2
     || error (printf "%s Overlapping nodes: %s(%s) %s(%s)" (show path) (show$ outer n1) (show $ location n1) (show$ outer n2) (show$ location n2))
 
-  nonOverlappingA :: Config => Internal.Attribute -> Internal.Attribute -> Bool
-  nonOverlappingA a1@(Internal.Attribute n v) a2@(Internal.Attribute n' v') =
+  nonOverlappingA :: Config => AttributeParseDetails -> AttributeParseDetails -> Bool
+  nonOverlappingA a1@(AttributeParseDetails n v) a2@(AttributeParseDetails n' v') =
     let slices = [n,v,n',v']
     in  and [ s >= s' || nonOverlappingS s s'
               | s <- slices, s' <- slices]
         || error (printf "overlapping attributes" (show a1) (show a2))
 
   nonOverlappingS :: Config => Slice -> Slice -> Bool
-  nonOverlappingS s1 s2 =    sliceEnd s1 <= sliceStart s2
-                          || sliceEnd s2 <= sliceStart s1
+  nonOverlappingS s1 s2 =    Slice.end s1 <= Slice.start s2
+                          || Slice.end s2 <= Slice.start s1
                           -- || error (printf "Overlapping slices: %s, %s" (show s1) (show s2))
 
   sorted nn =
-    let outers = map (sliceStart.Internal.outer.slices) nn
+    let outers = map (Slice.start.Slice.outer.slices) nn
     in sort outers == outers
     || error ("Internal error - nodes not sorted: " ++
-              show [ (name n, sliceStart(Internal.outer(slices n))) | n <- nn])
+              show [ (name n, Slice.start(Slice.outer(slices n))) | n <- nn])
 
 class (Show a, Show b) => TestEq a b where testEq :: a -> b -> IO ()
 
@@ -141,7 +143,7 @@ instance TestEq Node Hexml.Node where
     name n `testEq` Hexml.name n'
     test "attributes" (attributes n) (Hexml.attributes n')
     test "contents"   (contents n)   (Hexml.contents n')
-  
+
    where
      test (msg :: String) aa bb
        | length aa == length bb = zipWithM_ testEq aa bb
@@ -157,3 +159,21 @@ instance (Show a, Show b, TestEq a a', TestEq b b') => TestEq (Either a b) (Eith
   Right x `testEq` Right x' = x `testEq` x'
   testEq a b = error $ printf "mismatch in children: %s /= %s" (show a) (show b)
 
+debugShow :: Node -> String
+debugShow n =
+    unlines $
+         "Nodes buffer: "
+       : [ "  " ++ show n | n <- V.toList $ nodesV n]
+       ++ showNodeContents (Right n)
+     where
+       showNodeContents :: Either BS.ByteString Node -> [String]
+       showNodeContents (Right n) =
+          [ "Node contents:"
+          , "  name: " ++ show (name n)
+          , "  slices: " ++ show (slices n)
+          , "  attributes: " ++ (show $ attributes n)
+          , "  contents: "
+          ] ++
+          [ "    " ++ l | n' <- contents n, l <- showNodeContents n']
+       showNodeContents (Left txt) =
+          [ "Text content: " ++ BS.unpack txt ]

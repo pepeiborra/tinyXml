@@ -43,12 +43,11 @@ Flag Debug
 
 library
   hs-source-dirs:      src
-  exposed-modules:     Text.Xml.Tiny
+  exposed-modules:     Text.Xml.Tiny,
+                       Text.Xml.Tiny.Internal
   other-modules:       Config,
                        Control.Monad.STS,
                        Data.VectorBuilder.Storable,
-                       Text.Xml.Tiny.Types,
-                       Text.Xml.Tiny.Internal.Types,
                        Text.Xml.Tiny.Internal.Parser,
                        Text.Xml.Tiny.Internal.Checks,
                        Text.Xml.Tiny.Internal.Monad
@@ -62,7 +61,6 @@ library
     default-extensions:  StrictData
   ghc-options:         -funfolding-use-threshold=10000
   ghc-options:         -fno-warn-partial-type-signatures
-  ghc-options:         -ddump-simpl -ddump-to-file -dsuppress-idinfo -dsuppress-module-prefixes -dsuppress-type-applications -dppr-cols=150 -dppr-case-as-let -dsuppress-coercions
   if flag(Debug)
      cpp-options:         -DDEBUG -DSTACKTRACES
 
