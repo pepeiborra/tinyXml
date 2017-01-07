@@ -25,7 +25,16 @@ import GHC.Show
 
 import Control.Monad.Primitive
 
+-- | A hand-rolled State transformation of the ST monad
+-- >   type STS s a = Slice -> ST (a, Slice)
 newtype STS s a = STS {unSTS :: STSRep s a}
+
+-- | The ST monad representation is an unboxed 2-tuple, but the second component has lifted kind
+--   The naive transformation would yield
+-- > State# -> Slice -> (# State#, (Slice, a))
+--   So on every computation step we need to destruct and reconstruct the tuple (and the Slice, if its components are accessed)
+--   In practice the optimizer is able to almost eliminate all the overhead, but a tiny bit remains.
+--   So in order to avoid it, we roll our own monad by unpacking the slice contents into an unboxed 4-tuple.
 type STSRep s a = State# s -> Int# -> Int# -> (# State# s, Int#, Int#, a #)
 
 liftST :: ST s a -> STS s a

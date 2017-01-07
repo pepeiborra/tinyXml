@@ -1,9 +1,8 @@
 {-# LANGUAGE ConstraintKinds, KindSignatures, ImplicitParams, CPP #-}
 module Config where
+
 import GHC.Exts
-
 import qualified GHC.Stack
-
 import qualified Debug.Trace
 
 trace :: String -> a -> a

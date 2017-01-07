@@ -32,9 +32,7 @@ import GHC.Int
 
 import Data.VectorBuilder.Storable (VectorBuilder)
 import qualified Data.VectorBuilder.Storable as VectorBuilder
-import qualified Text.Xml.Tiny.Types as Slice
-import Text.Xml.Tiny.Types
-import Text.Xml.Tiny.Internal.Types
+import Text.Xml.Tiny.Internal as Slice
 import Text.Xml.Tiny.Internal.Checks
 
 import Config
@@ -45,13 +43,16 @@ type MonadParse m = MonadState ParseState m
 
 type ParseState = Slice
 
+-- | The mutable environment of the ParseMonad.
 data Env s =
-  Env { source          :: !ByteString
-      , ptr             :: {-# UNPACK #-} !(Ptr Word8)
-      , attributeBuffer :: {-# UNPACK #-} !(VectorBuilder s Attribute)
-      , nodeBuffer      :: {-# UNPACK #-} !(VectorBuilder s Node)
+  Env { source          :: !ByteString  -- ^ The input bytestring containing the XML document
+      , ptr             :: {-# UNPACK #-} !(Ptr Word8) -- ^ A pointer to the raw bits of the above bytestring
+      , attributeBuffer :: {-# UNPACK #-} !(VectorBuilder s AttributeParseDetails) -- ^ All the attributes parsed so far
+      , nodeBuffer      :: {-# UNPACK #-} !(VectorBuilder s ParseDetails) -- ^ All the nodes parsed so far
       }
 
+-- | A Reader Env, State Slice, ST monad,
+--   the cursor Slice is deconstructed to its component in the STS monad.
 newtype ParseMonad s a = PM {unPM :: Env s -> STS s a}
 
 liftSTS :: Config => STS s a -> ParseMonad s a
@@ -62,17 +63,20 @@ unsafeLiftIO action = liftSTS (unsafeIOToSTS action)
 
 runPM :: Config => ByteString -> (forall s. ParseMonad s a) -> a
 runPM bs@(PS fptr (fromIntegral -> I32# o) (fromIntegral -> I32# l)) pm = runSTS o l $ do
+  -- initial buffer sizes copied from hexml
   attributes <- VectorBuilder.new 1000
   nodes <- VectorBuilder.new 500
   let ptr = unsafeForeignPtrToPtr fptr
   unPM pm (Env bs ptr attributes nodes)
 
+-- | Render a BS slice in the source bytestring.
 readStr :: Config => Slice -> ParseMonad s ByteString
 readStr str = do
   Env{source = PS fptr _ _} <- getEnv
   return $! fromIndexPtr str fptr
 
 {-# INLINE getBS #-}
+-- | Get the rest of the document from the current cursor
 getBS :: Config => ParseMonad s ByteString
 getBS = get >>= readStr
 
@@ -85,9 +89,6 @@ unsafeIO msg action = unsafeLiftIO $ do
   action
 #endif
 
-peek :: Config => (Char -> a) -> ParseMonad s a
-peek = peekAt 0
-
 {-# INLINE withCursor #-}
 withCursor k = do
   checkCursor
@@ -95,6 +96,11 @@ withCursor k = do
   Slice o l <- get
   k p o l
 
+-- | Look ahead. Peek at the current cursor (CPS to avoid unnecesary allocations)
+peek :: Config => (Char -> a) -> ParseMonad s a
+peek = peekAt 0
+
+-- | Arbitrary look-ahead (CPS)
 peekAt :: Config => Int32 -> (Char -> a) -> ParseMonad s a
 peekAt i pred = withCursor $ \p o l ->
   if (l < i) then throw UnexpectedEndOfStream else peekAtUnsafePO i pred p o
@@ -102,6 +108,7 @@ peekAt i pred = withCursor $ \p o l ->
 {-# INLINE peekAtUnsafePO #-}
 peekAtUnsafePO i pred p o = (pred.w2c) <$> unsafeIO "BS" (peekByteOff p (fromIntegral $ i + o))
 
+-- | Look-ahead a pair of positions, optimizing a common case (CPS)
 bsIndex2 :: Config => Int32 -> Int32 -> (Char -> Char -> a) -> ParseMonad s a
 bsIndex2 i j pred = withCursor $ \p o l ->
   if (l<i || l<j) then throw UnexpectedEndOfStream else do
@@ -110,6 +117,7 @@ bsIndex2 i j pred = withCursor $ \p o l ->
     byteJ <- peekAtUnsafePO j id p o
     return $ pred byteI byteJ
 
+-- | isPrefix at the current cursor
 bsIsPrefix :: Config => ByteString -> ParseMonad s Bool
 bsIsPrefix (PS r o' l') = withCursor $ \p o _ -> do
   resp <-
@@ -118,6 +126,7 @@ bsIsPrefix (PS r o' l') = withCursor $ \p o _ -> do
   let res = resp == 0
   return res
 
+-- | elem index from the current cursor
 bsElemIndex :: Char -> ParseMonad s (Maybe Int)
 bsElemIndex c = withCursor $ \p o l -> do
   let !p' = p `plusPtr` fromIntegral o
@@ -126,12 +135,14 @@ bsElemIndex c = withCursor $ \p o l -> do
   return res
 {-# INLINE bsElemIndex #-}
 
+-- | drop while from the current cursor
 bsDropWhile :: (Char -> Bool) -> ParseMonad s ()
 bsDropWhile f = withCursor $ \p o l -> do
   !n <- unsafeIO "BS" $ findIndexOrEnd (not.f.w2c) (p `plusPtr` fromIntegral o) l
   put $ Slice (o+n) (l-n)
 {-# INLINE bsDropWhile #-}
 
+-- | Move the cursor ahead while the predicate is true, and return the dropped slice.
 {-# INLINE bsSpan #-}
 bsSpan :: (Char -> Bool) -> ParseMonad s Slice
 bsSpan f = withCursor $ \ p o l -> do
@@ -147,9 +158,10 @@ findIndexOrEnd k p l = go p 0 where
                                   then return n
                                   else go (ptr `plusPtr` 1) (n+1)
 
+-- | Return the current cursor location
 {-# INLINE loc #-}
 loc :: ParseMonad s SrcLoc
-loc = PM $ \_env -> STS $ \ s o l -> (# s, o, l, SrcLoc $ fromIntegral (I32# o) #)
+loc = get >>= \ (Slice o _) -> return $ SrcLoc $ fromIntegral o
 
 throw :: HasCallStack => ErrorType -> a
 #if __GLASGOW_HASKELL__ < 800
@@ -158,17 +170,16 @@ throw e = CE.throw $ Error e ?callStack
 throw e = CE.throw $ Error e GHC.Stack.callStack
 #endif
 
+-- | Throw with the current cursor location
 throwLoc :: Config => (SrcLoc -> ErrorType) -> ParseMonad s a
 throwLoc e = loc >>= throw . e
-
-type Builder s a = ParseMonad s (Maybe a)
 
 {-# INLINE getEnv #-}
 getEnv :: ParseMonad s (Env s)
 getEnv = PM return
 
 -- | Push a node into the temporary stack
-pushNode :: Config => Node -> ParseMonad s Int32
+pushNode :: Config => ParseDetails -> ParseMonad s Int32
 pushNode node = do
   Env{nodeBuffer} <- getEnv
   VectorBuilder.push nodeBuffer node
@@ -181,20 +192,20 @@ popNodes n = do
   Env{nodeBuffer} <- getEnv
   VectorBuilder.pop nodeBuffer n
 
-peekNode :: Config => Int32 -> ParseMonad s Node
+peekNode :: Config => Int32 -> ParseMonad s ParseDetails
 peekNode n = do
   Env{nodeBuffer} <- getEnv
   VectorBuilder.peek nodeBuffer n
 {-# INLINE peekNode #-}
 
 -- | Insert a node into permanent storage
-insertNode :: Config => Node -> ParseMonad s ()
+insertNode :: Config => ParseDetails -> ParseMonad s ()
 insertNode node = do
   Env{nodeBuffer} <- getEnv
   VectorBuilder.insert nodeBuffer node
 {-# INLINE insertNode #-}
 
-insertAttribute :: Attribute -> ParseMonad s ()
+insertAttribute :: AttributeParseDetails -> ParseMonad s ()
 insertAttribute att = do
   Env{attributeBuffer} <- getEnv
   VectorBuilder.insert attributeBuffer att
@@ -216,14 +227,15 @@ getNodeStackCount = do
   VectorBuilder.getStackCount nodeBuffer
 {-# INLINE getNodeStackCount #-}
 
+-- | Update a node in the stack buffer
 {-# INLINE updateNode #-}
-updateNode :: Int32 -> (Node -> Node) -> ParseMonad s ()
+updateNode :: Int32 -> (ParseDetails -> ParseDetails) -> ParseMonad s ()
 updateNode i f = do
   Env{nodeBuffer} <- getEnv
   VectorBuilder.updateStackElt nodeBuffer i f
 
 instance Functor (ParseMonad s) where
-  fmap f (PM m) = PM ( fmap f . m)
+  fmap = liftM
 
 instance Applicative (ParseMonad s) where
   pure x = PM (\_ -> return x)

@@ -13,6 +13,9 @@
 {-# LANGUAGE BangPatterns #-}
 {-# LANGUAGE NamedFieldPuns #-}
 
+-- | A hand rolled predictive recursive descent parser for a subset of XML.
+--   There is no lexer, the parser assumes Char8 tokens.
+--   The parser state is held in the Environment data structure of a ParseMonad
 module Text.Xml.Tiny.Internal.Parser (parse) where
 
 import Control.Exception (try, evaluate, assert)
@@ -27,8 +30,7 @@ import System.IO.Unsafe
 import Text.Printf
 
 import Text.Xml.Tiny.Internal.Monad
-import Text.Xml.Tiny.Internal.Types
-import Text.Xml.Tiny.Types as Slice
+import Text.Xml.Tiny.Internal as Slice
 import Config
 
 default (Int, Double)
@@ -75,7 +77,7 @@ parseName :: Config => ParseMonad s Slice
 parseName = do
   !first <- peek isName1
   case first of
-    False -> return sliceEmpty
+    False -> return Slice.empty
     True  -> do
       slice@(Slice _ l) <- bsSpan isName
       assert (l > 0 || error(show slice)) $ return slice
@@ -92,7 +94,7 @@ parseAttrVal n = do
   trim
   !c  <- pop id
   unless (c == '\'' || c == '\"') (throwLoc BadAttributeForm)
-  findAndPop c BadAttributeForm (insertAttribute . Attribute n)
+  findAndPop c BadAttributeForm (insertAttribute . AttributeParseDetails n)
 
 {-# INLINE parseAttr #-}
 parseAttr :: Config => ParseMonad s Bool
@@ -130,19 +132,22 @@ parseNode = do
         (isTagEnd, isTagClose) <- bsIndex2 0 1 $ \c n -> ((c == '/' || c == '?') && n == '>', c == '>')
         skip 1
         if isTagEnd
+          -- this is a tag with no children
           then do
             skip 1
             SrcLoc outerClose <- loc
             let !outer = fromOpenClose outerOpen outerClose
-            let inner = sliceEmpty
-            _ <- pushNode(Node name inner outer attrs sliceEmpty)
+            let inner = Slice.empty
+            _ <- pushNode(ParseDetails name inner outer attrs Slice.empty)
             return ()
           else do
             unless isTagClose $ do
               nameBS <- readStr name
               throwLoc (UnterminatedTag$ BS.unpack nameBS)
             SrcLoc innerOpen <- loc
-            me <- pushNode(ProtoNode name attrs (fromIntegral innerOpen) (fromIntegral outerOpen))
+            -- record a partial entry to insert at the right point in the stack
+            -- and to (hopefully) allow the GC to release all the node details already
+            me <- pushNode(ProtoParseDetails name attrs (fromIntegral innerOpen) (fromIntegral outerOpen))
             !nn <- parseContents
             SrcLoc innerClose <- loc
             isTagEnd <- bsIndex2 0 1 $ \c n -> c == '<' && n == '/'
@@ -158,11 +163,12 @@ parseNode = do
               Just i  -> skip $! (i+1)
               Nothing -> throwLoc BadTagForm
             SrcLoc outerClose <- loc
-            updateNode me $ \n@ProtoNode{name=name', innerStart = innerOpen', outerStart = outerOpen', attributes=attrs'} ->
+            -- Update the stack entry with the full details now
+            updateNode me $ \n@ProtoParseDetails{name=name', innerStart = innerOpen', outerStart = outerOpen', attributes=attrs'} ->
               assert (name==name') $
               assert (innerOpen == fromIntegral innerOpen' || error (printf "Expected:%d, Obtained:%d, me: %d, node: %s" innerOpen innerOpen' me (show n))) $
               assert (outerOpen == fromIntegral outerOpen' || error (printf "Expected:%d, Obtained:%d" outerOpen outerOpen')) $
-              Node name' (fromOpenClose innerOpen' innerClose) (fromOpenClose outerOpen' outerClose) attrs' nn
+              ParseDetails name' (fromOpenClose innerOpen' innerClose) (fromOpenClose outerOpen' outerClose) attrs' nn
 
 commentEnd :: ParseMonad s ()
 {-# INLINE commentEnd #-}
@@ -184,31 +190,44 @@ dropComments = do
     commentEnd
   return x
 
--- | Returns a slice of nodes
+-- | Parses a sequence of zero or more nodes.
 parseContents :: forall s. Config => ParseMonad s Slice
 parseContents = do
+  -- Record how many elements are there in the node stack before parsing the contents
   !before <- getNodeStackCount
+
+  -- the recursive worker
   let goParseContents :: Config => ParseMonad s ()
       goParseContents = do
-        !open <- bsElemIndex '<'
-        case open of
+        -- we can skip all characters until we find a start tag
+        -- this is key to good performance
+        !start <- bsElemIndex '<'
+        case start of
           Just i -> do
             skip i
-            !next <- peekAt 1 (== '/')
-            unless next $ do
+            -- if look ahead reveals the "</" sequence then this is an end tag and we're done
+            !end <- peekAt 1 (== '/')
+            unless end $ do
+                -- is this a real tag or a user comment ?
                 !wasComment <- dropComments
                 if wasComment
                   then
+                    -- after wiping out comments, start over
                     goParseContents
                   else do
+                    -- looks like we've found a node, parse it and start over
                     _ <- parseNode
                     goParseContents
           -- no tag
           _ ->
             return ()
+  -- loop until we run out of tag openers
   () <- goParseContents
+  -- and find out how much the stack has grown
   !after <- getNodeStackCount
   !front <- getNodeBufferCount
+  -- The new unpopped items in the stack are the ones parsed by us
+  -- Pop them out an return a slice identifying them.
   let diff = after - before
   popNodes diff
   return $! Slice front diff
@@ -252,7 +271,7 @@ parse bs = unsafePerformIO $ do
   let len = fromIntegral $ BS.length bs
   return $! case res of
     Right (!it, attributesV, nodesV) ->
-      let rootNode = Node sliceEmpty (Slice 0 len) (Slice 0 len) sliceEmpty it
+      let rootNode = ParseDetails Slice.empty (Slice 0 len) (Slice 0 len) Slice.empty it
       in Right (attributesV, nodesV, rootNode )
     Left e ->
       Left e
