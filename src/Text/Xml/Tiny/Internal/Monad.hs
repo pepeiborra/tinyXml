@@ -17,7 +17,9 @@ module Text.Xml.Tiny.Internal.Monad where
 import qualified Control.Exception as CE
 import Control.Monad
 import Control.Monad.Primitive
-import Control.Monad.STS
+import Control.Monad.ST
+import Control.Monad.ST.Unsafe
+import GHC.ST (ST(..))
 import Control.Monad.State.Class
 import Data.ByteString.Internal (ByteString(..), c2w, w2c, memchr, memcmp)
 import qualified Data.ByteString.Char8 as BS
@@ -53,21 +55,22 @@ data Env s =
 
 -- | A Reader Env, State Slice, ST monad,
 --   the cursor Slice is deconstructed to its component in the STS monad.
-newtype ParseMonad s a = PM {unPM :: Env s -> STS s a}
+newtype ParseMonad s a = PM {unPM :: Env s -> Slice -> ST s (a,Slice)}
 
-liftSTS :: Config => STS s a -> ParseMonad s a
-liftSTS action = PM $ const action
+liftST :: Config => ST s a -> ParseMonad s a
+liftST action = PM $ \_ slice -> (,slice) <$> action
 
 unsafeLiftIO :: Config => IO a -> ParseMonad s a
-unsafeLiftIO action = liftSTS (unsafeIOToSTS action)
+unsafeLiftIO action = liftST (unsafeIOToST action)
 
 runPM :: Config => ByteString -> (forall s. ParseMonad s a) -> a
-runPM bs@(PS fptr (fromIntegral -> I32# o) (fromIntegral -> I32# l)) pm = runSTS o l $ do
+runPM bs@(PS fptr (fromIntegral -> o) (fromIntegral -> l)) pm = runST $ do
   -- initial buffer sizes copied from hexml
   attributes <- VectorBuilder.new 1000
   nodes <- VectorBuilder.new 500
   let ptr = unsafeForeignPtrToPtr fptr
-  unPM pm (Env bs ptr attributes nodes)
+  (res,_) <- unPM pm (Env bs ptr attributes nodes) (Slice o l)
+  return res
 
 -- | Render a BS slice in the source bytestring.
 readStr :: Config => Slice -> ParseMonad s ByteString
@@ -176,7 +179,7 @@ throwLoc e = loc >>= throw . e
 
 {-# INLINE getEnv #-}
 getEnv :: ParseMonad s (Env s)
-getEnv = PM return
+getEnv = PM $ \e s -> return (e,s)
 
 -- | Push a node into the temporary stack
 pushNode :: Config => ParseDetails -> ParseMonad s Int32
@@ -238,22 +241,21 @@ instance Functor (ParseMonad s) where
   fmap = liftM
 
 instance Applicative (ParseMonad s) where
-  pure x = PM (\_ -> return x)
+  pure x = PM (\_ s -> return (x,s))
   (<*>) = ap
 
 instance Monad (ParseMonad s) where
   {-# INLINE (>>=) #-}
-  PM m >>= k = PM (\e -> m e >>= \a -> unPM (k a) e)
+  PM m >>= k = PM (\e s -> m e s >>= \(a,s') -> unPM (k a) e s')
 
 instance MonadState ParseState (ParseMonad s) where
-  get = PM $ \_ -> STS $ \ s o l -> (# s, o, l, Slice (I32# o) (I32# l) #)
-  put (Slice (I32# o) (I32# l)) = PM $ \_ -> STS $ \ s _ _ ->
-      (# s, o, l, () #)
+  get = PM $ \_ s -> return (s,s)
+  put s = PM $ \_ _ -> return ((), s)
 
 instance PrimMonad (ParseMonad s) where
   type PrimState(ParseMonad s) = s
   {-# INLINE primitive #-}
-  primitive m = PM $ \ _ -> primitive m
+  primitive act = PM (\_ s -> (,s) <$> ST act )
 
 checkCursor
   | doCursorChecks = do

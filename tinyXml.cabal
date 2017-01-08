@@ -46,7 +46,6 @@ library
   exposed-modules:     Text.Xml.Tiny,
                        Text.Xml.Tiny.Internal
   other-modules:       Config,
-                       Control.Monad.STS,
                        Data.VectorBuilder.Storable,
                        Text.Xml.Tiny.Internal.Parser,
                        Text.Xml.Tiny.Internal.Checks,
