@@ -11,6 +11,7 @@ module Data.VectorBuilder.Storable
 
 import Control.Exception (assert)
 import Control.Monad
+import Control.Monad.ST.Unsafe
 import Control.Monad.Primitive
 import Data.Int
 import Data.Primitive.MutVar
@@ -20,6 +21,7 @@ import qualified Data.Vector.Generic.Mutable as M
 --import qualified Data.Vector.Storable.Mutable as M
 import qualified Data.Vector.Unboxed.Mutable  as U
 import Foreign (Storable(sizeOf), Ptr, plusPtr)
+import Foreign.ForeignPtr
 import Foreign.ForeignPtr.Unsafe (unsafeForeignPtrToPtr)
 import Config
 import Text.Printf
@@ -77,7 +79,7 @@ request !n VectorBuilder{next,store} = do
   let !len = M.length a
   unless (frontCount + backCount + n < fromIntegral len) $ do
         return ()
-        a' <- M.basicUnsafeNew (len*2)
+        a' <- newVectorAllocatedExternally(len*2)
         copyM (sliceM 0 frontCount a') (sliceM 0 frontCount a)
         copyM (sliceM (2 * fromIntegral len - backCount) backCount a') (sliceM (fromIntegral len - backCount) backCount a)
         writeMutVar (store ) a'
@@ -165,6 +167,8 @@ new initialSize = do
   next <- U.unsafeNew 2
   writeU next 0 0
   writeU next 1 0
-  store <- M.unsafeNew initialSize
+  store <- newVectorAllocatedExternally initialSize
   storeRef <- newMutVar store
   return (VectorBuilder next storeRef)
+
+newVectorAllocatedExternally size = (`SM.unsafeFromForeignPtr0` size) <$> primToPrim (unsafeIOToST $ mallocForeignPtrArray size)
