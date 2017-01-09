@@ -20,22 +20,20 @@ author:              Pepe Iborra
 
 maintainer:          pepeiborra@gmail.com
 
--- A copyright notice.
--- copyright:           
-
 category:            XML
 
 build-type:          Simple
 
--- Extra files to be distributed with the package, such as examples or a 
--- README.
 extra-source-files:  ChangeLog.md, xml/benchmark.xml.bz2, xml/mail.xml.bz2
 extra-tmp-files:     xml/benchmark.xml, xml/mail.xml, xml/benchmark.xml.reprint, xml/mail.xml.reprint
 
--- Constraint on the version of Cabal needed to build this package.
 cabal-version:       >=1.22
 
 tested-with:         GHC == 7.10.3, GHC == 8.0.1
+
+source-repository head
+  type: git
+  location: https://github.com/pepeiborra/tinyXml
 
 Flag Debug
     Description:     enables call stacks and other debug options
