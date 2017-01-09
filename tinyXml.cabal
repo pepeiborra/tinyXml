@@ -6,7 +6,7 @@ name:                tinyXml
 -- PVP summary:      +-+------- breaking API changes
 --                   | | +----- non-breaking API additions
 --                   | | | +--- code changes with no API change
-version:             0.1.0.0
+version:             0.1.0.1
 
 synopsis:            A fast DOM parser for a subset of XML
 
@@ -24,7 +24,7 @@ category:            XML
 
 build-type:          Simple
 
-extra-source-files:  ChangeLog.md, xml/benchmark.xml.bz2, xml/mail.xml.bz2
+extra-source-files:  README.md, ChangeLog.md, xml/benchmark.xml.bz2, xml/mail.xml.bz2
 extra-tmp-files:     xml/benchmark.xml, xml/mail.xml, xml/benchmark.xml.reprint, xml/mail.xml.reprint
 
 cabal-version:       >=1.22
